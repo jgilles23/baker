@@ -1,0 +1,135 @@
+* {
+    font-family: 'Arial';
+    padding: 0;
+    margin: 0;
+    /* text-align: center; */
+    /* scroll-behavior: smooth; */
+    /* -webkit-user-select: none; */
+    /* Safari */
+    -moz-user-select: none;
+    /* Firefox */
+    -ms-user-select: none;
+    /* IE10+/Edge */
+    user-select: none;
+    /* Standard */
+    /* touch-action: pan-y; */
+    --main-width: 95vw;
+}
+
+.main {
+    width: calc(min(70em, 90vw));
+    margin: auto;
+    container-type: inline-size;
+}
+
+.topbar {
+    display: flex;
+    align-items: center;
+    /* background-color: lightblue; */
+    font-size: 3em;
+    font-weight: bold;
+    justify-content: space-between;
+    width:100cqw;
+}
+
+.topbar-button {
+    height: 0.5em
+}
+
+/* GAME AREAS */
+
+.top-area {
+    display: flex;
+}
+
+.column-area {
+    display: flex;
+}
+
+.column {
+    margin: 0.25vw;
+    padding: 0.5vw;
+    flex-grow: 1;
+    /* flex-basis: 0; */
+    width: 0;
+}
+
+.free-cell {
+    margin: 0.25vw;
+    padding: 0.5vw;
+    /* border-radius: 1vw; */
+    background-color: lightgray;
+    flex-grow: 1;
+    width: 0;
+}
+
+.foundation {
+    margin: 0.25vw;
+    padding: 0.5vw;
+    background-color: lightblue;
+    flex-grow: 1;
+    width: 0;
+}
+
+/* PLAYING CARD STANDARDS */
+
+.playing-card-layout-box {
+    font-size: calc(min(1.5em, 3vw));
+    position: relative;
+    /* border: 1px solid red; */
+}
+
+.playing-card-layout-box-partial {
+    height: 1.5em;
+}
+
+.playing-card {
+    display: flex;
+    /* align-items: center; */
+    /* align-items: space-between; */
+    /* justify-content: flex-end; */
+    justify-content: space-between;
+    border-style: solid;
+    border-width: 1px;
+    border-color: black;
+    border-width: 2px;
+    border-radius: 0.7em;
+    /* width: 10vw; */
+    height: 4em;
+    flex-direction: column;
+    padding: 0.2em;
+    background-color: white;
+}
+
+[class *="playing-card-label"] {
+    display: flex;
+    height: 1em;
+}
+
+.playing-card-label-top {
+    align-self: flex-start;
+}
+
+.playing-card-label-bottom {
+    align-self: flex-end;
+
+}
+
+.playing-card-value {
+    display: flex;
+    align-self: center;
+}
+
+.playing-card-suit {
+    font-size: 1.2em;
+    align-self: center;
+}
+
+/* PLAYING CARD HIGHLIGHTS */
+.card-start-highlight>div {
+    background-color: lightgrey;
+}
+
+.card-end-highlight>div {
+    background-color: greenyellow;
+}
