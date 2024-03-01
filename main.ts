@@ -72,13 +72,8 @@ function isAnySelectionEqual(selection: SelectionOption, options: Array<Selectio
     return false
 }
 
-function stringifyCard(card:Card): string {
-    return "("+card.value.toString()+","+card.suit.toString()+")"
-}
-
-function unstringifyCard(x:string): Card {
-    let arrayStr = x.substring(1, x.length-1).split(",")
-    return {value: parseInt(arrayStr[0]), suit: parseInt(arrayStr[1]), selectionType: "none"}
+function stringifyCard(card: Card): string {
+    return "0A23456789TJQKabcdefgh"[card.value] + "zsdch"[card.suit]
 }
 
 let emptyCard: Card = { value: 0, suit: 0, selectionType: "none", }
@@ -178,7 +173,7 @@ class Game {
     select(selection: SelectionOption) {
         // performs appropriate actions when a selection is made
         // Start by clearing all selections already made
-        console.log("clicked", selection, this.getCardFromSelection(selection));
+        // console.log("clicked", selection, this.getCardFromSelection(selection));
         let previousSelectionOptions = this.selectionOptions
         this.setSelectionTypeForOptions("none", this.selectionOptions)
         this.selectionOptions = []
@@ -225,7 +220,6 @@ class Game {
             // Clear selection and do a new start selection
             this.calculateStartOptions()
         }
-        console.log(JSON.parse(this.stringifyGameState()))
     }
 
     setSelectionTypeForOptions(selectionType: SelectionType, options: Array<SelectionOption>) {
@@ -342,32 +336,39 @@ class Game {
     }
 
     stringifyGameState(): string {
-        let sortedGameState: GameState = {
-            freeCells: [...this.state.freeCells].sort(
-                (a: Card,b: Card):number => {
+        let stringGameState: string =
+
+            [...this.state.freeCells].sort(
+                (a: Card, b: Card): number => {
                     //-1 left item should be before right, 0 sort equally, 1 sorted after
-                    // Sort by value then suit
-                    let aNumber = a.value*1000 + a.suit
-                    let bNumber = b.value*1000 + b.suit
-                    if (aNumber < bNumber) {return -1}
-                    else if (aNumber = bNumber) {return 0}
-                    else {return 1}
+                    // Sort by value then suit 
+                    let aNumber = a.value * 1000 + a.suit
+                    let bNumber = b.value * 1000 + b.suit
+                    return bNumber - aNumber //high to low sort
                 }
-            ),
-            foundations:[...this.state.foundations],
-            columns: [...this.state.columns].sort(
-                // Sort by the top card in the stack 
-                (a: Array<Card>, b:Array<Card>):number => {
-                    let aNumber = a[a.length - 1].value*1000 + a[a.length - 1].suit
-                    let bNumber = b[b.length - 1].value*1000 + b[b.length - 1].suit
-                    if (aNumber < bNumber) {return -1}
-                    else if (aNumber = bNumber) {return 0}
-                    else {return 1}
+            ).map(
+                (card: Card) => stringifyCard(card)
+            ).join("") +
+            " | " +
+            [...this.state.foundations].map(
+                (column) => column.map(
+                    (card: Card) => stringifyCard(card)
+                ).join("")
+            ).join(",") +
+            " | " +
+            [...this.state.columns].sort(
+                // Sort by the top card in the stack   
+                (a: Array<Card>, b: Array<Card>): number => {
+                    let aNumber = a[a.length - 1].value * 1000 + a[a.length - 1].suit
+                    let bNumber = b[b.length - 1].value * 1000 + b[b.length - 1].suit
+                    return bNumber - aNumber //high to low sort
                 }
-            )
-        }
-        console.log("sorted game state free cells", sortedGameState.freeCells)
-        return JSON.stringify(sortedGameState)
+            ).map(
+                (column) => column.map(
+                    (card: Card) => stringifyCard(card)
+                ).join("")
+            ).join(",")
+        return stringGameState
     }
 
     copy(): Game {
@@ -382,7 +383,7 @@ class Game {
         G.autoFoundations = this.autoFoundations
         return G
     }
-    
+
     checkForWin(): boolean {
         //Check if the current position of the game is winning, by checking if no cards remain to be placed in the foundation
         for (let freeCell of this.state.freeCells) {
@@ -391,7 +392,7 @@ class Game {
             }
         }
         for (let column of this.state.columns) {
-            if (column.length > 1) { 
+            if (column.length > 1) {
                 return false
             }
         }
@@ -579,7 +580,6 @@ function recursiveStack(cards: Array<SelectionOption>, targetCard: SelectionOpti
     let moves: Array<[SelectionOption, SelectionOption]> = []
     let target: Array<SelectionOption> = []
     let allFree = freeCells.concat(freeColumns)
-    console.log(allFree)
     if (cards.length <= allFree.length + 1) {
         // Play all the cards to piles
         let i = -1
@@ -623,15 +623,17 @@ for (let i = 2; i < numFreeColumns + 2; i++) {
 }
 
 let x = recursiveStack(cards, targetCard, freeCells, freeColumns, false)
-console.log(x)
 
 */
 
 function bruteSolver(game: Game, scorecard: Scorecard, lookup: Record<string, Scorecard>, winningScorecard: Scorecard): Scorecard {
     //Returns a winningScoreCard if a better solution (or any solution is found)
     //Otherwise returns false
-    console.log(scorecard.steps.toString(),"game state", game.state)
     //Use a branching algorythm with a lookup table to solve via a pretty brute force algorythm
+    //Planned inprovements:
+    // Stack moving improvement
+    // Single card in foundation storage rules (stop moving back and forth)
+    //
     //Check if the game is won
     if (game.checkForWin()) {
         // Add to the lookup as a win condition
@@ -649,7 +651,6 @@ function bruteSolver(game: Game, scorecard: Scorecard, lookup: Record<string, Sc
     //Check if self is in the bruteSolver
     let gameString = game.stringifyGameState()
     if (gameString in lookup) {
-        console.log("found repeat")
         // Test if this is a more efficient solution
         if (scorecard.steps < lookup[gameString].steps) {
             lookup[gameString] = scorecard
@@ -658,31 +659,44 @@ function bruteSolver(game: Game, scorecard: Scorecard, lookup: Record<string, Sc
             // Less efficient, stop looking
             return winningScorecard
         }
+    } else {
+        //Gamestring not encountered before
+        console.log(scorecard.steps, "gameString", gameString)
+        lookup[gameString] = scorecard
+        // vm.drawGame(game)
     }
     //Iterate through the next scorecard options
-    for (let selectionOption of game.selectionOptions) {
-        let newGame = game.copy()
-        newGame.select(selectionOption)
-        let newActionList = [...scorecard.actionList]
-        newActionList.push(selectionOption)
-        let newScorecard: Scorecard = {
-            state: game.state, 
-            steps: scorecard.steps + 1, 
-            actionList:newActionList
-        }
-        let returnScorecard = bruteSolver(newGame, newScorecard, lookup, winningScorecard)
-        // set winning scorecard
-        if (returnScorecard.steps < winningScorecard.steps) {
-            winningScorecard = returnScorecard
+    for (let intermediarySelectionOption of game.selectionOptions) {
+        //Select from location
+        let intermediaryGame = game.copy()
+        intermediaryGame.select(intermediarySelectionOption)
+        for (let selectionOption of intermediaryGame.selectionOptions) {
+            //Select too location
+            let newGame = intermediaryGame.copy()
+            newGame.select(selectionOption)
+            let newActionList = [...scorecard.actionList]
+            newActionList.push(selectionOption)
+            let newScorecard: Scorecard = {
+                state: game.state,
+                steps: scorecard.steps + 1,
+                actionList: newActionList
+            }
+            let returnScorecard = bruteSolver(newGame, newScorecard, lookup, winningScorecard)
+            // set winning scorecard
+            if (returnScorecard.steps < winningScorecard.steps) {
+                winningScorecard = returnScorecard
+            }
         }
     }
     // Return overall winning or losing scorecard
     return winningScorecard
 }
 
-// let startingScorecard: Scorecard = {state: game.state, steps: 0, actionList:[]}
-// let winningScorecard: Scorecard = {state: game.state, steps: 10**6, actionList:[]}
+// let startingScorecard: Scorecard = { state: game.state, steps: 0, actionList: [] }
+// let winningScorecard: Scorecard = { state: game.state, steps: 10 ** 6, actionList: [] }
 // let lookup: Record<string, Scorecard> = {}
 // let resultScorecard = bruteSolver(game, startingScorecard, lookup, winningScorecard)
 // console.log("RESULT")
 // console.log(resultScorecard)
+
+// vm.drawGame(game)
