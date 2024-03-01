@@ -22,7 +22,7 @@ interface Scorecard {
     state: GameState //State contained by the scorecard --- may be redundant with dictionary key
     steps: number //Count the number of steps to the current state
     actionList: Array<SelectionOption> //List of actions taken to get to current scorecard
-    //Action 0 is the first action taken to get to current state
+    //Action 0 is the first action taken to get to current state d
 }
 
 function getElementByClass(parentDiv: HTMLDivElement, className: string): HTMLDivElement {
