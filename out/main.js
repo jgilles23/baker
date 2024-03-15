@@ -1,4 +1,13 @@
 "use strict";
+//Control variable definitons
+let infiniteSteps = 10 ** 6; //Define a depth for infinity for comparisons, big number
+let defaultGameOptions = {
+    numColumns: 8,
+    numFreeCells: 4,
+    hardColumns: false,
+    autoFoundations: true
+};
+// const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function getElementByClass(parentDiv, className) {
     let children = parentDiv.getElementsByClassName(className);
     if (children.length == 0) {
@@ -42,75 +51,41 @@ function isAnySelectionEqual(selection, options) {
 function stringifyCard(card) {
     return "0A23456789TJQKabcdefgh"[card.value] + "zsdch"[card.suit];
 }
-let emptyCard = { value: 0, suit: 0, selectionType: "none", };
-class Game {
-    constructor(state = undefined, numColumns = 8, numFreeCells = 4, hardColumns = false) {
-        // Setup other base variables
-        this.selectionOptions = [];
-        this.currentSelection = undefined;
-        this.autoFoundations = true;
-        // Load state or start new state
-        if (state === undefined) {
-            this.numColumns = numColumns;
-            this.numFreeCells = numFreeCells;
-            this.hardColumns = hardColumns;
-            //Setup state
-            this.state = {
-                freeCells: [],
-                foundations: [],
-                columns: [],
-            };
-            // Deal a new game
-            this.newGame();
-        }
-        else {
-            this.numColumns = numColumns;
-            this.numFreeCells = numFreeCells;
-            this.hardColumns = hardColumns;
-            // Set the state for the new game
-            this.state = state;
-            //Calculate the start options
-            this.calculateStartOptions();
-        }
+function getCardDivNode(card, parentDiv) {
+    return parentDiv.querySelector("div[name='" + stringifyCard(card) + "']");
+}
+function getCardClientRect(card, parentDiv) {
+    //Get the ClientRect for the specificed card within the specified parent Div element
+    //If the card is not found, return: undefined
+    let cardNode = getCardDivNode(card, parentDiv);
+    if (cardNode) {
+        return cardNode.getBoundingClientRect();
     }
-    newGame() {
-        //Setup state
-        this.state = {
-            freeCells: [],
-            foundations: [],
-            columns: [],
-        };
-        //Add empty cards and empty cells; Freecells, foundations, columns
-        for (let i = 0; i < this.numFreeCells; i++) {
-            this.state.freeCells.push({ value: 0, suit: 0, selectionType: "none" });
-        }
-        for (let i = 0; i < 4; i++) {
-            this.state.foundations.push([{ value: 0, suit: i + 1, selectionType: "none" }]);
-        }
-        for (let i = 0; i < this.numColumns; i++) {
-            this.state.columns.push([{ value: 0, suit: 0, selectionType: "none" }]);
-        }
-        //Create a deck and shuffle it
-        let deck = [];
-        for (let i = 1; i <= 13; i++) {
-            for (let j = 1; j <= 4; j++) {
-                deck.push({ value: i, suit: j, selectionType: "none" });
-            }
-        }
-        shuffleArray(deck);
-        //Deal the cards
-        let col = 0;
-        for (let card of deck) {
-            this.state.columns[col].push(card);
-            col += 1;
-            if (col == this.numColumns) {
-                col = 0;
-            }
-        }
-        //Calculate the start options
-        this.calculateStartOptions();
+    else {
+        return undefined;
+    }
+}
+class Game {
+    constructor(options, state, selectionOptions, currentSelection) {
+        //Game Class - for holding state of the game, any relevant options, and provides methods
+        // for updating and changing the state of the game
+        //Unpack options
+        this.numColumns = options.numColumns;
+        this.numFreeCells = options.numFreeCells;
+        this.hardColumns = options.hardColumns;
+        this.autoFoundations = options.autoFoundations;
+        //Assign state
+        this.state = state;
+        //Assign selection Options & current selection
+        this.selectionOptions = selectionOptions;
+        this.currentSelection = currentSelection;
+    }
+    localStorageSaveState() {
+        //TODO - move out of the game and into the visual manager
+        localStorage.setItem("state", JSON.stringify(this.state));
     }
     getCardFromSelection(selection) {
+        // retreive a Card object from the state given a SelectionOption object
         // freeCell
         if (selection.location === "freeCell") {
             // freeCell selection
@@ -130,16 +105,20 @@ class Game {
     }
     select(selection) {
         // performs appropriate actions when a selection is made
+        //Returns an array of cards, if a card was moved, the array is ordered in the order that the cards
+        // are moved
+        //Create the return array
+        let movedCards = [];
         // Start by clearing all selections already made
-        // console.log("clicked", selection, this.getCardFromSelection(selection));
         let previousSelectionOptions = this.selectionOptions;
-        this.setSelectionTypeForOptions("none", this.selectionOptions);
-        this.selectionOptions = [];
+        this.setSelectionTypeForOptions("none", this.selectionOptions); //visually de-select all cards
+        this.selectionOptions = []; //Reset selection options
         let previousSelection = this.currentSelection;
         if (this.currentSelection != undefined) {
-            this.setSelectionTypeForOptions("none", [this.currentSelection]);
-            this.currentSelection = undefined;
+            this.setSelectionTypeForOptions("none", [this.currentSelection]); //visually clear current selection
+            this.currentSelection = undefined; //reset current selection
         }
+        //Check if selection match any of the selection options
         if (isAnySelectionEqual(selection, previousSelectionOptions)) {
             if (previousSelection == undefined) {
                 // Get the START - where a card is coming from
@@ -175,18 +154,22 @@ class Game {
                 else {
                     throw new Error("Unsupported selection location" + selection.location);
                 }
+                // Save the result into movedCards
+                movedCards.push(card);
                 //Save results of selection to the local storage
-                localStorage.setItem("state", JSON.stringify(this.state));
+                this.localStorageSaveState();
                 // Start the next selection
-                this.calculateStartOptions();
+                movedCards.push(...this.calculateStartOptions());
             }
         }
         else {
             // Clear selection and do a new start selection
-            this.calculateStartOptions();
+            movedCards.push(...this.calculateStartOptions());
         }
+        return movedCards;
     }
     setSelectionTypeForOptions(selectionType, options) {
+        //Update the selection type for each card in the current state
         for (let option of options) {
             if (option.location === "freeCell") {
                 this.state.freeCells[option.column].selectionType = selectionType;
@@ -201,6 +184,8 @@ class Game {
     }
     calculateStartOptions() {
         // Iterate through possible start options and see what can be selected
+        let movedCards = [];
+        //Setup a return for cards that were moved as part of the autofoundations flag
         // Setup autoFoundationOption
         let autoFoundationStart = undefined;
         let autoFoundationEnd = undefined;
@@ -214,7 +199,7 @@ class Game {
                 if (endOptions.length > 0) {
                     options.push(selection);
                     card.selectionType = "end";
-                    // Auto move cards to the foundation if appropriate
+                    // Auto move cards to the foundation if appropriate, and autoFoundations is true
                     if (this.autoFoundations === true) {
                         for (let option of endOptions) {
                             if (option.location === "foundation") {
@@ -252,9 +237,11 @@ class Game {
         this.selectionOptions = options;
         // Perform autoFoundationOption - automatically moves cards to the foundation
         if (this.autoFoundations === true && autoFoundationStart !== undefined && autoFoundationEnd !== undefined) {
-            this.select(autoFoundationStart);
-            this.select(autoFoundationEnd);
+            movedCards.push(...this.select(autoFoundationStart)); //select start -- should not return a card
+            movedCards.push(...this.select(autoFoundationEnd)); //select end -- should return a card
         }
+        //Return the moved cards in the correct order, first to last as moved
+        return movedCards;
     }
     calculateEndOptions(selection, truncateSearch = false) {
         // Calculate where the selected start card can end
@@ -319,16 +306,7 @@ class Game {
         return stringGameState;
     }
     copy() {
-        let copiedState = JSON.parse(JSON.stringify(this.state));
-        let G = new Game(copiedState, this.numColumns, this.numFreeCells, this.hardColumns);
-        if (this.selectionOptions) {
-            G.selectionOptions = JSON.parse(JSON.stringify(this.selectionOptions));
-        }
-        if (this.currentSelection) {
-            G.currentSelection = JSON.parse(JSON.stringify(this.currentSelection));
-        }
-        G.autoFoundations = this.autoFoundations;
-        return G;
+        return new GameFromGame(this);
     }
     checkForWin() {
         //Check if the current position of the game is winning, by checking if no cards remain to be placed in the foundation
@@ -349,19 +327,121 @@ class Game {
         return this.selectionOptions.length == 0;
     }
 }
+class GameFromGame extends Game {
+    constructor(parentGame) {
+        super({
+            numColumns: parentGame.numColumns,
+            numFreeCells: parentGame.numFreeCells,
+            hardColumns: parentGame.hardColumns,
+            autoFoundations: parentGame.autoFoundations
+        }, JSON.parse(JSON.stringify(parentGame.state)), //state
+        JSON.parse(JSON.stringify(parentGame.selectionOptions)), //selectionOptions
+        parentGame.currentSelection === undefined ?
+            undefined : JSON.parse(JSON.stringify(parentGame.currentSelection)) //currentSelection
+        );
+    }
+}
+class GameFromState extends Game {
+    constructor(state) {
+        //Create a game from the state, use defualt options
+        //MUST CALL calculateStartOptions if inital display of autofoundation is desired
+        super({
+            numColumns: state.columns.length,
+            numFreeCells: state.freeCells.length,
+            hardColumns: defaultGameOptions.hardColumns,
+            autoFoundations: defaultGameOptions.autoFoundations
+        }, JSON.parse(JSON.stringify(state)), //state
+        [], //selectionOptions
+        undefined //currentSelection
+        );
+    }
+}
+class RandomGame extends GameFromState {
+    constructor() {
+        //Randomize the game
+        //Setup state
+        let state = {
+            freeCells: [],
+            foundations: [],
+            columns: [],
+        };
+        //Add empty cards and empty cells; Freecells, foundations, columns
+        for (let i = 0; i < defaultGameOptions.numFreeCells; i++) {
+            state.freeCells.push({ value: 0, suit: 0, selectionType: "none" });
+        }
+        for (let i = 0; i < 4; i++) {
+            state.foundations.push([{ value: 0, suit: i + 1, selectionType: "none" }]);
+        }
+        for (let i = 0; i < defaultGameOptions.numColumns; i++) {
+            state.columns.push([{ value: 0, suit: 0, selectionType: "none" }]);
+        }
+        //Create a deck and shuffle it
+        let deck = [];
+        for (let i = 1; i <= 13; i++) {
+            for (let j = 1; j <= 4; j++) {
+                deck.push({ value: i, suit: j, selectionType: "none" });
+            }
+        }
+        shuffleArray(deck);
+        //Deal the cards
+        let col = 0;
+        for (let card of deck) {
+            state.columns[col].push(card);
+            col += 1;
+            if (col == defaultGameOptions.numColumns) {
+                col = 0;
+            }
+        }
+        //Call super to define game from state
+        super(state);
+    }
+}
 class VisualManager {
     constructor(main) {
         this.main = main;
+        this.drawChain = [];
+        this.drawingInProgressFlag = false;
     }
-    drawGame(game) {
+    drawGame(game, showMoveCards) {
+        //Add to the chain & process a sync if appropriate 
+        // A sync processing handled by processDrawingChain and processDrawGame
+        // this.drawChain.push(() => this.processDrawGame(game.copy(), [])) //[...showMoveCards]
+        // //Try to process the drawing chain
+        // this.processDrawingChain()
+        this.processDrawGame(game, showMoveCards);
+    }
+    // processDrawingChain() {
+    //     //Check if this function already running, if not, process the next item in the drawing chain
+    //     if (false && this.drawingInProgressFlag) {
+    //         //If drawing in progress, let that event completion trigger the next step in drawing
+    //         console.log("aborted, in progress")
+    //         return
+    //     }
+    //     //Take control of the drawing process
+    //     this.drawingInProgressFlag = true
+    //     //Pop first item from chain & run, if no item return control
+    //     let process = this.drawChain.shift()
+    //     if (process === undefined) {
+    //         this.drawingInProgressFlag = false
+    //         return
+    //     } else {
+    //         process() //Execute the process, assumes that processDrawGame calls this function at the end
+    //     }
+    // }
+    processDrawGame(game, showMoveCards) {
+        //Draw the game presented, if showMove is defined, will animate the movement of
+        // the array of cards from the previous position to the new positions
+        //Get previous positions of the cards
+        let fromCardPositionRects = showMoveCards.map(card => getCardClientRect(card, this.main));
         //Create and draw the top area
         let topArea = getElementByClass(this.main, 'top-area');
         removeNodeChildren(topArea);
         // Find and bind refresh button
         let refreshButton = document.getElementById('refresh');
         refreshButton.onclick = () => {
-            game.newGame();
-            this.drawGame(game);
+            let game = new RandomGame();
+            let movedCards = game.calculateStartOptions();
+            this.drawGame(game, movedCards);
         };
         // Free Cells
         for (let i = 0; i < game.numFreeCells; i++) {
@@ -371,25 +451,25 @@ class VisualManager {
             let card = game.state.freeCells[i];
             let f = () => {
                 // onclick function for the card
-                game.select({ location: "freeCell", column: i, row: 0 });
-                this.drawGame(game);
+                let movedCards = game.select({ location: "freeCell", column: i, row: 0 });
+                this.drawGame(game, movedCards);
             };
-            this.createCard(freeCell, card, true, f);
+            this.createCard(freeCell, card, "full", f);
         }
-        // Foundations
+        // Foundations -- display even covered cards (for animation purposes)
         for (let i = 0; i < game.numFreeCells; i++) {
             let foundation = document.createElement("div");
             topArea.appendChild(foundation);
             foundation.classList.add("foundation");
-            let len = game.state.foundations[i].length;
-            if (len > 0) {
-                let card = game.state.foundations[i][len - 1];
+            let lastCardJ = game.state.foundations[i].length - 1;
+            for (let j = 0; j < game.state.foundations[i].length; j++) {
+                let card = game.state.foundations[i][j];
                 let f = () => {
                     // onclick function for the card
-                    game.select({ location: "foundation", column: i, row: len - 1 });
-                    this.drawGame(game);
+                    let movedCards = game.select({ location: "foundation", column: i, row: j });
+                    this.drawGame(game, movedCards);
                 };
-                this.createCard(foundation, card, true, f);
+                this.createCard(foundation, card, "covered", f);
             }
         }
         // Columns
@@ -401,17 +481,60 @@ class VisualManager {
             column.classList.add("column");
             for (let j = 0; j < game.state.columns[i].length; j++) {
                 let card = game.state.columns[i][j];
-                let fullCard = (j == game.state.columns[i].length - 1);
+                let fullCard = (j == game.state.columns[i].length - 1) ? "full" : "partial";
                 let f = () => {
                     // onclick function for the card
-                    game.select({ location: "column", column: i, row: j });
-                    this.drawGame(game);
+                    let movedCards = game.select({ location: "column", column: i, row: j });
+                    this.drawGame(game, movedCards);
                 };
                 this.createCard(column, card, fullCard, f);
             }
         }
+        // Calculate new positions of the cards & deltas between old and new positions
+        //Iterate through each card that we would like to move,
+        // assign to the animation class, define its offset in the x & y - position compute
+        let finalAnimatedNode = undefined; //Tracks final animated element, so that chain can be called
+        console.log("deep showMoveCard", showMoveCards);
+        for (let i = 0; i < showMoveCards.length; i++) {
+            let card = showMoveCards[i]; //Final card position Node
+            let cardNode = getCardDivNode(card, this.main);
+            let toRect = getCardClientRect(card, this.main);
+            let fromCard = fromCardPositionRects[i];
+            if (fromCard !== undefined && toRect !== undefined && cardNode) {
+                //If either is undefined, do not animate this card
+                //Calcuate the translate values
+                let deltaX = fromCard.x - toRect.x;
+                let deltaY = fromCard.y - toRect.y;
+                if (deltaX !== 0 || deltaY !== 0) {
+                    cardNode.classList.add("animated-card");
+                    cardNode.style.animation = "none";
+                    cardNode.offsetHeight;
+                    cardNode.style.animation = "";
+                    cardNode.style.setProperty("--translateFromX", deltaX.toString() + "px");
+                    cardNode.style.setProperty("--translateFromY", deltaY.toString() + "px");
+                    //Set listener for when event starts and ends
+                    finalAnimatedNode = cardNode;
+                }
+            }
+        }
+        //Add event listener to the final animated node so that call back to the listener chain can be made when appropriate
+        if (finalAnimatedNode === undefined) {
+            //Immediatly call on the chain to run the next value, do not need to wait for anything
+            this.drawingInProgressFlag = false;
+            // this.processDrawingChain()
+        }
+        else {
+            //Call the drawing chain for the next step
+            finalAnimatedNode.addEventListener("animationend", () => {
+                if (finalAnimatedNode !== null && finalAnimatedNode !== undefined) {
+                    // finalAnimatedNode.classList.remove("animated-card")
+                }
+                this.drawingInProgressFlag = false;
+                // this.processDrawingChain()
+            });
+        }
     }
-    createCard(area, cardObject, fullCard, onclick = function () { }) {
+    createCard(area, cardObject, cardDisplayStyle, onclick = function () { }) {
         // Unpack card information
         let value = cardObject.value;
         let suit = cardObject.suit;
@@ -419,8 +542,11 @@ class VisualManager {
         let templateArea = document.getElementById('template-area');
         let cardTemplate = templateArea.getElementsByClassName("playing-card-layout-box")[0];
         let card = cardTemplate.cloneNode(true);
-        if (fullCard == false) {
+        if (cardDisplayStyle == "partial") {
             card.classList.add("playing-card-layout-box-partial");
+        }
+        else if (cardDisplayStyle == "covered") {
+            card.classList.add("playing-card-layout-box-fully-covered");
         }
         card.style.display = "block"; //Unhide template
         // Do highlight
@@ -481,25 +607,31 @@ class VisualManager {
         }
         for (let suitArea of card.getElementsByClassName("playing-card-suit")) {
             suitArea.textContent = suitString;
-            card.style.color = suitColor;
         }
+        //Color the card
+        card.style.color = suitColor;
+        // Name the card
+        card.setAttribute("name", stringifyCard(cardObject));
         // Add the onclick event
-        card.onclick = function (event) { onclick(); };
+        card.onclick = function () { onclick(); };
         area.appendChild(card);
         // Return the card for adding an onclick event
         return card;
     }
 }
-let vm = new VisualManager(document.getElementById('main'));
+let VM = new VisualManager(document.getElementById('main'));
 let loadState = localStorage.getItem("state");
 let game;
+let movedCards;
 if (true && loadState !== null) {
-    game = new Game(JSON.parse(loadState));
+    game = new GameFromState(JSON.parse(loadState));
+    movedCards = game.calculateStartOptions();
 }
 else {
-    game = new Game();
+    game = new RandomGame();
+    movedCards = game.calculateStartOptions();
 }
-vm.drawGame(game);
+VM.drawGame(game, movedCards);
 /*
 // SECTION FOR ATTEMPRITNG TO FIGURE OUT AN EFFICIENT WAY TO MOVE CARDS AS A STACK
 
@@ -580,6 +712,17 @@ function bruteSolver(game, scorecard, lookup, winningScorecard) {
     // Stack moving improvement
     // Single card in foundation storage rules (stop moving back and forth)
     //
+    //Check if the path to victory is too long and should truncate
+    if (winningScorecard.steps < infiniteSteps) {
+        // Minimum remaining steps is the number of cards in the columns
+        // Depending on settings may be +1 due to auto foundations, TODO
+        let minRemainingSteps = game.state.columns.reduce((partialSum, column) => partialSum + column.length - 1, 0);
+        if (scorecard.steps + minRemainingSteps >= winningScorecard.steps) {
+            //impossible to complete in fewer steps than the found winning state, break
+            console.log("Perfect play from this scorecard requires too many steps");
+            return winningScorecard;
+        }
+    }
     //Check if the game is won
     if (game.checkForWin()) {
         // Add to the lookup as a win condition
@@ -590,8 +733,9 @@ function bruteSolver(game, scorecard, lookup, winningScorecard) {
         }
         return winningScorecard;
     }
+    //Check if the game is lost
     if (game.checkForLoss()) {
-        console.log("Found losing scorecard", scorecard);
+        //console.log("Found losing scorecard", scorecard)
         return winningScorecard;
     }
     //Check if self is in the bruteSolver
@@ -639,11 +783,13 @@ function bruteSolver(game, scorecard, lookup, winningScorecard) {
     // Return overall winning or losing scorecard
     return winningScorecard;
 }
-// let startingScorecard: Scorecard = { state: game.state, steps: 0, actionList: [] }
-// let winningScorecard: Scorecard = { state: game.state, steps: 10 ** 6, actionList: [] }
-// let lookup: Record<string, Scorecard> = {}
-// let resultScorecard = bruteSolver(game, startingScorecard, lookup, winningScorecard)
-// console.log("RESULT")
-// console.log(resultScorecard)
-// vm.drawGame(game)
+// RUN SOLUTION SEARCH
+if (false) { // eslint-disable-line
+    let startingScorecard = { state: game.state, steps: 0, actionList: [] };
+    let winningScorecard = { state: game.state, steps: infiniteSteps, actionList: [] };
+    let lookup = {};
+    let resultScorecard = bruteSolver(game, startingScorecard, lookup, winningScorecard);
+    console.log("RESULT");
+    console.log(resultScorecard);
+}
 //# sourceMappingURL=main.js.map

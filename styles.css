@@ -1,4 +1,8 @@
 * {
+    /* Control variables modified by Javascript*/
+    /* Other golbal settings and control variables */
+    --card-slide-animation-duration: 0.7s;
+    --main-width: 95vw;
     font-family: 'Arial';
     padding: 0;
     margin: 0;
@@ -13,7 +17,6 @@
     user-select: none;
     /* Standard */
     /* touch-action: pan-y; */
-    --main-width: 95vw;
 }
 
 .main {
@@ -29,7 +32,7 @@
     font-size: 3em;
     font-weight: bold;
     justify-content: space-between;
-    width:100cqw;
+    width: 100cqw;
 }
 
 .topbar-button {
@@ -83,6 +86,10 @@
     height: 1.5em;
 }
 
+.playing-card-layout-box-fully-covered {
+    height: 0em;
+}
+
 .playing-card {
     display: flex;
     /* align-items: center; */
@@ -132,4 +139,23 @@
 
 .card-end-highlight>div {
     background-color: greenyellow;
+}
+
+/* PLAYING CARD ANIMATIONS */
+
+.animated-card {
+    animation-duration: var(--card-slide-animation-duration);
+    animation-name: slide-card;
+    z-index: 1; /*Set above other cards*/
+    /* border: 2px solid red */
+}
+
+@keyframes slide-card {
+    from {
+        translate: var(--translateFromX) var(--translateFromY);
+    }
+
+    to {
+        translate: 0px 0px
+    }
 }
