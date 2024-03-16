@@ -108,7 +108,7 @@ class Game {
         //Returns an array of cards, if a card was moved, the array is ordered in the order that the cards
         // are moved
         //Create the return array
-        let movedCards = [];
+        let animationFrames = [];
         // Start by clearing all selections already made
         let previousSelectionOptions = this.selectionOptions;
         this.setSelectionTypeForOptions("none", this.selectionOptions); //visually de-select all cards
@@ -127,6 +127,8 @@ class Game {
                 this.currentSelection = selection;
                 this.selectionOptions = this.calculateEndOptions(selection);
                 this.setSelectionTypeForOptions("end", this.selectionOptions);
+                // Ensure that the selection shows up in the animation
+                animationFrames.push({ movedCard: undefined, game: this.copy() });
             }
             else {
                 // SET THE END - where a card is going to
@@ -155,18 +157,18 @@ class Game {
                     throw new Error("Unsupported selection location" + selection.location);
                 }
                 // Save the result into movedCards
-                movedCards.push(card);
+                animationFrames.push({ movedCard: card, game: this.copy() });
                 //Save results of selection to the local storage
                 this.localStorageSaveState();
                 // Start the next selection
-                movedCards.push(...this.calculateStartOptions());
+                animationFrames.push(...this.calculateStartOptions());
             }
         }
         else {
             // Clear selection and do a new start selection
-            movedCards.push(...this.calculateStartOptions());
+            animationFrames.push(...this.calculateStartOptions());
         }
-        return movedCards;
+        return animationFrames;
     }
     setSelectionTypeForOptions(selectionType, options) {
         //Update the selection type for each card in the current state
@@ -184,7 +186,6 @@ class Game {
     }
     calculateStartOptions() {
         // Iterate through possible start options and see what can be selected
-        let movedCards = [];
         //Setup a return for cards that were moved as part of the autofoundations flag
         // Setup autoFoundationOption
         let autoFoundationStart = undefined;
@@ -235,13 +236,14 @@ class Game {
         }
         // set the current options
         this.selectionOptions = options;
+        let animationFrames = [{ movedCard: undefined, game: this.copy() }];
         // Perform autoFoundationOption - automatically moves cards to the foundation
         if (this.autoFoundations === true && autoFoundationStart !== undefined && autoFoundationEnd !== undefined) {
-            movedCards.push(...this.select(autoFoundationStart)); //select start -- should not return a card
-            movedCards.push(...this.select(autoFoundationEnd)); //select end -- should return a card
+            animationFrames.push(...this.select(autoFoundationStart)); //select start -- should not return a card
+            animationFrames.push(...this.select(autoFoundationEnd)); //select end -- should return a card
         }
         //Return the moved cards in the correct order, first to last as moved
-        return movedCards;
+        return animationFrames;
     }
     calculateEndOptions(selection, truncateSearch = false) {
         // Calculate where the selected start card can end
@@ -399,40 +401,31 @@ class RandomGame extends GameFromState {
 class VisualManager {
     constructor(main) {
         this.main = main;
-        this.drawChain = [];
+        this.animationFrames = [];
         this.drawingInProgressFlag = false;
     }
-    drawGame(game, showMoveCards) {
-        //Add to the chain & process a sync if appropriate 
-        // A sync processing handled by processDrawingChain and processDrawGame
-        // this.drawChain.push(() => this.processDrawGame(game.copy(), [])) //[...showMoveCards]
-        // //Try to process the drawing chain
-        // this.processDrawingChain()
-        this.processDrawGame(game, showMoveCards);
+    drawGame(animationFrames) {
+        //Process the animationFrames, leaving the last animation frame game as the display in the end
+        this.animationFrames = animationFrames;
+        console.log("animationFrames", [...animationFrames]);
+        this.processDrawGame();
     }
-    // processDrawingChain() {
-    //     //Check if this function already running, if not, process the next item in the drawing chain
-    //     if (false && this.drawingInProgressFlag) {
-    //         //If drawing in progress, let that event completion trigger the next step in drawing
-    //         console.log("aborted, in progress")
-    //         return
-    //     }
-    //     //Take control of the drawing process
-    //     this.drawingInProgressFlag = true
-    //     //Pop first item from chain & run, if no item return control
-    //     let process = this.drawChain.shift()
-    //     if (process === undefined) {
-    //         this.drawingInProgressFlag = false
-    //         return
-    //     } else {
-    //         process() //Execute the process, assumes that processDrawGame calls this function at the end
-    //     }
-    // }
-    processDrawGame(game, showMoveCards) {
+    processDrawGame() {
         //Draw the game presented, if showMove is defined, will animate the movement of
         // the array of cards from the previous position to the new positions
-        //Get previous positions of the cards
-        let fromCardPositionRects = showMoveCards.map(card => getCardClientRect(card, this.main));
+        //Pull the next frame out of the buffer and process 
+        let animationFrame = this.animationFrames.shift();
+        if (animationFrame === undefined) {
+            return;
+        }
+        //Process inputs
+        let game = animationFrame.game;
+        let card = animationFrame.movedCard;
+        let fromCardPositionRect;
+        if (card !== undefined) {
+            //Get previous positions of the cards
+            fromCardPositionRect = getCardClientRect(card, this.main);
+        }
         //Create and draw the top area
         let topArea = getElementByClass(this.main, 'top-area');
         removeNodeChildren(topArea);
@@ -440,8 +433,8 @@ class VisualManager {
         let refreshButton = document.getElementById('refresh');
         refreshButton.onclick = () => {
             let game = new RandomGame();
-            let movedCards = game.calculateStartOptions();
-            this.drawGame(game, movedCards);
+            let animationFrames = game.calculateStartOptions();
+            this.drawGame(animationFrames);
         };
         // Free Cells
         for (let i = 0; i < game.numFreeCells; i++) {
@@ -451,8 +444,8 @@ class VisualManager {
             let card = game.state.freeCells[i];
             let f = () => {
                 // onclick function for the card
-                let movedCards = game.select({ location: "freeCell", column: i, row: 0 });
-                this.drawGame(game, movedCards);
+                let animationFrames = game.select({ location: "freeCell", column: i, row: 0 });
+                this.drawGame(animationFrames);
             };
             this.createCard(freeCell, card, "full", f);
         }
@@ -466,8 +459,8 @@ class VisualManager {
                 let card = game.state.foundations[i][j];
                 let f = () => {
                     // onclick function for the card
-                    let movedCards = game.select({ location: "foundation", column: i, row: j });
-                    this.drawGame(game, movedCards);
+                    let animationFrames = game.select({ location: "foundation", column: i, row: j });
+                    this.drawGame(animationFrames);
                 };
                 this.createCard(foundation, card, "covered", f);
             }
@@ -484,8 +477,8 @@ class VisualManager {
                 let fullCard = (j == game.state.columns[i].length - 1) ? "full" : "partial";
                 let f = () => {
                     // onclick function for the card
-                    let movedCards = game.select({ location: "column", column: i, row: j });
-                    this.drawGame(game, movedCards);
+                    let animationFrames = game.select({ location: "column", column: i, row: j });
+                    this.drawGame(animationFrames);
                 };
                 this.createCard(column, card, fullCard, f);
             }
@@ -493,13 +486,11 @@ class VisualManager {
         // Calculate new positions of the cards & deltas between old and new positions
         //Iterate through each card that we would like to move,
         // assign to the animation class, define its offset in the x & y - position compute
-        let finalAnimatedNode = undefined; //Tracks final animated element, so that chain can be called
-        console.log("deep showMoveCard", showMoveCards);
-        for (let i = 0; i < showMoveCards.length; i++) {
-            let card = showMoveCards[i]; //Final card position Node
+        let animatedFlag = false;
+        if (card !== undefined) {
             let cardNode = getCardDivNode(card, this.main);
             let toRect = getCardClientRect(card, this.main);
-            let fromCard = fromCardPositionRects[i];
+            let fromCard = fromCardPositionRect;
             if (fromCard !== undefined && toRect !== undefined && cardNode) {
                 //If either is undefined, do not animate this card
                 //Calcuate the translate values
@@ -512,26 +503,16 @@ class VisualManager {
                     cardNode.style.animation = "";
                     cardNode.style.setProperty("--translateFromX", deltaX.toString() + "px");
                     cardNode.style.setProperty("--translateFromY", deltaY.toString() + "px");
-                    //Set listener for when event starts and ends
-                    finalAnimatedNode = cardNode;
+                    //Mark the flag that we need to wait for the animation and setup animation completion action
+                    animatedFlag = true;
+                    cardNode.addEventListener("animationend", () => this.processDrawGame());
                 }
             }
         }
-        //Add event listener to the final animated node so that call back to the listener chain can be made when appropriate
-        if (finalAnimatedNode === undefined) {
-            //Immediatly call on the chain to run the next value, do not need to wait for anything
-            this.drawingInProgressFlag = false;
-            // this.processDrawingChain()
-        }
-        else {
-            //Call the drawing chain for the next step
-            finalAnimatedNode.addEventListener("animationend", () => {
-                if (finalAnimatedNode !== null && finalAnimatedNode !== undefined) {
-                    // finalAnimatedNode.classList.remove("animated-card")
-                }
-                this.drawingInProgressFlag = false;
-                // this.processDrawingChain()
-            });
+        //Call self to process remaining frames
+        if (animatedFlag === false) {
+            // Not waiting for an animation to complete, immediatly call the next draw function
+            this.processDrawGame();
         }
     }
     createCard(area, cardObject, cardDisplayStyle, onclick = function () { }) {
@@ -622,16 +603,16 @@ class VisualManager {
 let VM = new VisualManager(document.getElementById('main'));
 let loadState = localStorage.getItem("state");
 let game;
-let movedCards;
+let metaAnimationFrames;
 if (true && loadState !== null) {
     game = new GameFromState(JSON.parse(loadState));
-    movedCards = game.calculateStartOptions();
+    metaAnimationFrames = game.calculateStartOptions();
 }
 else {
     game = new RandomGame();
-    movedCards = game.calculateStartOptions();
+    metaAnimationFrames = game.calculateStartOptions();
 }
-VM.drawGame(game, movedCards);
+VM.drawGame(metaAnimationFrames);
 /*
 // SECTION FOR ATTEMPRITNG TO FIGURE OUT AN EFFICIENT WAY TO MOVE CARDS AS A STACK
 

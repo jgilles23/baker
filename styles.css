@@ -1,7 +1,7 @@
 * {
     /* Control variables modified by Javascript*/
     /* Other golbal settings and control variables */
-    --card-slide-animation-duration: 0.7s;
+    --card-slide-animation-duration: 0.3s;
     --main-width: 95vw;
     font-family: 'Arial';
     padding: 0;
