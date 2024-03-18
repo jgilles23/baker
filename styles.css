@@ -141,6 +141,10 @@
     background-color: greenyellow;
 }
 
+.card-debug-highlight>div {
+    background-color: yellow;;
+}
+
 /* PLAYING CARD ANIMATIONS */
 
 .animated-card {
