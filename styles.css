@@ -29,14 +29,14 @@
     display: flex;
     align-items: center;
     /* background-color: lightblue; */
-    font-size: 3em;
+    font-size: 2em;
     font-weight: bold;
     justify-content: space-between;
     width: 100cqw;
 }
 
 .topbar-button {
-    height: 0.5em
+    height: 0.8em
 }
 
 /* GAME AREAS */

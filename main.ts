@@ -49,6 +49,15 @@ interface AnimationFrame {
     game: Game;
 }
 
+type LocalStorageStateType = "new" | "step"
+
+interface LocalStorageState {
+    //Save state and type of state to the local storage
+    type: LocalStorageStateType;
+    state: GameState;
+    string: string; //stringify of GameState, to avoid duplicates
+}
+
 // const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function getElementByClass(parentDiv: HTMLDivElement, className: string): HTMLDivElement {
@@ -205,8 +214,8 @@ interface NontrivialLookupValue {
     i: number, //Set to 0 if impossible
     steps: number //Set to 0 if iompssible
 }
-function stringifyNontrivilaLookupKey(numCards: number, openLocations: LocationSet, originOpenAfterMove: boolean) {
-    return `cards:${numCards}, freeCell:${openLocations.freeCells.length}, column:${openLocations.columns.length}, originOpen:${originOpenAfterMove}`
+function stringifyNontrivilaLookupKey(numCards: number, openLocations: LocationSet, originOpenAfterMove: boolean, destinationOpenBeforeMove: boolean) {
+    return `cards:${numCards}, freeCell:${openLocations.freeCells.length}, column:${openLocations.columns.length}, originOpen:${originOpenAfterMove}, destinationOpen:${destinationOpenBeforeMove}`
 }
 let nontrivialLookup: Record<string, NontrivialLookupValue> = {}
 
@@ -265,7 +274,8 @@ function stackMove(cardStack: Array<number | Card>, origin: ColumnLetter | Selec
     let bestMoveI: number = 0
     //Gather list of possible i partition values
     let iOptionsArray: number[]
-    let lookupKey = stringifyNontrivilaLookupKey(cardStack.length, startOpenLocations, originOpenAfterMove)
+    let destinationOpenBeforeMove: boolean = startOpenLocations.indexOfColumnInArray(startOpenLocations.columns, destination) >= 0
+    let lookupKey = stringifyNontrivilaLookupKey(cardStack.length, startOpenLocations, originOpenAfterMove, destinationOpenBeforeMove)
     if (lookupKey in nontrivialLookup) {
         //This combination has been encountred before, only check the known best "i" value
         let iReturn = nontrivialLookup[lookupKey].i
@@ -344,6 +354,9 @@ function stackMove(cardStack: Array<number | Card>, origin: ColumnLetter | Selec
         }
     }
     //Add or replace the best move found in the lookup dictionary
+    if (lookupKey == "cards:4, freeCell:1, column:1, originOpen:true") {
+        console.log("got here")
+    }
     if (bestMoveCommands.length === 0) {
         nontrivialLookup[lookupKey] = { i: 0, steps: 0 }
     } else {
@@ -409,11 +422,6 @@ class Game implements GameOptions {
         this.currentSelection = currentSelection
     }
 
-    localStorageSaveState() {
-        //TODO - move out of the game and into the visual manager
-        localStorage.setItem("state", JSON.stringify(this.state))
-    }
-
     getCardFromSelection(selection: SelectionOption): Card {
         // retreive a Card object from the state given a SelectionOption object
         // freeCell
@@ -438,6 +446,20 @@ class Game implements GameOptions {
         if (this.currentSelection != undefined) {
             this.setSelectionTypeForOptions("none", [this.currentSelection]) //visually clear current selection
             this.currentSelection = undefined //reset current selection
+        }
+        //Clear all selections
+        for (let card of this.state.freeCells) {
+            card.selectionType = "none"
+        }
+        for (let foundation of this.state.foundations) {
+            for (let card of foundation) {
+                card.selectionType = "none"
+            }
+        }
+        for (let column of this.state.columns) {
+            for (let card of column) {
+                card.selectionType = "none"
+            }
         }
     }
 
@@ -476,7 +498,6 @@ class Game implements GameOptions {
                         previousSelection.row === 1, //originOpenAfterMove
                         0 //depth
                     )
-                    console.log("Move Commands", moveCommands)
                     //Clear selection to prepare for the next selection from moveCommands
                     this.clearSelection()
                     animationFrames.push(...this.calculateStartOptions())
@@ -492,9 +513,9 @@ class Game implements GameOptions {
                             endSelection.row = this.state.columns[endSelection.column].length - 1
                         }
                         //Perform the moves --- TODO may fail if autoFoundations moves cards
-                        console.log("startSelection", startSelection, "selectionOptions", this.selectionOptions)
+                        // console.log("startSelection", startSelection, "selectionOptions", this.selectionOptions)
                         animationFrames.push(...this.select(startSelection))
-                        console.log("endSelection", endSelection, "selectionOptions", this.selectionOptions)
+                        // console.log("endSelection", endSelection, "selectionOptions", this.selectionOptions)
                         animationFrames.push(...this.select(endSelection))
                     }
                 } else {
@@ -519,8 +540,6 @@ class Game implements GameOptions {
                     }
                     // Save the result into movedCards
                     animationFrames.push({ movedCard: card, game: this.copy() })
-                    //Save results of selection to the local storage
-                    this.localStorageSaveState()
                     // Start the next selection
                     animationFrames.push(...this.calculateStartOptions())
                 }
@@ -602,7 +621,7 @@ class Game implements GameOptions {
                 while (stackCheckFlag && cardIndex > 0) {
                     let checkCard = this.state.columns[i][cardIndex]
                     if (isLower(checkCard, previousCard)) {
-                        // checkCard.selectionType = "debug"
+                        //checkCard.selectionType = "debug"
                         //Calculate end options for the cards
                         let stackHeadEndOptions = this.calculateEndOptions(
                             { location: "column", column: i, row: cardIndex },
@@ -672,7 +691,7 @@ class Game implements GameOptions {
             if (isHigher(card, columnCard) || columnCard.value === 0) {
                 //See if / how the stack can be moved
                 if (headOfStackFlag) {
-                    let moveCommands = stackMove( //TODO, make this faster by returning only the answer
+                    let moveCommands = stackMove( //TODO,  make this faster by returning only the answer
                         this.state.columns[selection.column].slice(selection.row), //cardStack
                         selection, //origin
                         this.getOpenLocationSet(), //openLocationSet
@@ -811,6 +830,8 @@ class GameFromState extends Game {
             [], //selectionOptions
             undefined //currentSelection
         )
+        //Clear display
+        this.clearSelection()
     }
 }
 
@@ -860,17 +881,139 @@ class VisualManager {
     main: HTMLDivElement;
     animationFrames: Array<AnimationFrame>
     drawingInProgressFlag: boolean //true if activly drawing (discard call), if false initiate draw
+    storageStateAllItems: LocalStorageState[]
+    localStorageStateLocation = "stateItems"
+    storageStateMaxItems = 200
 
     constructor(main: HTMLDivElement) {
         this.main = main;
         this.animationFrames = []
         this.drawingInProgressFlag = false
+        //Load the local storage state if it exists
+        this.storageStateAllItems = []
+        this.localStorageLoad() //Grab from the localStorage
+        this.storageLoadCurrent() //Grab from the object storage
+        if (this.storageStateAllItems.length == 0) {
+            //Local storage load did not find a game to load, create a game
+            this.newRandomGame()
+        }
+        //Setup buttons
+        // Find and bind refresh button
+        let refreshButton = document.getElementById('refresh') as HTMLDivElement
+        refreshButton.onclick = () => {
+            this.newRandomGame()
+        }
+        // Find and bind the back button - load the most recent state
+        let undoButton = document.getElementById("undo") as HTMLDivElement
+        undoButton.onclick = () => {
+            this.storageLoadPrevious(undefined) //Load whatever was the previous state
+        }
+        //Find and bind the restart button - load the most recent new game state
+        let restartButton = document.getElementById("restart") as HTMLDivElement
+        restartButton.onclick = () => {
+            this.storageLoadPrevious("new")
+        }
+        //Find and bind the clear button - clears all of the localStorage
+        let clearButton = document.getElementById("clear") as HTMLDivElement
+        clearButton.onclick = () => {
+            this.localStorageClear()
+        }
+    }
+
+    newRandomGame() {
+        let game = new RandomGame()
+        let animationFrames = game.calculateStartOptions()
+        this.storageSave(game, "new") //Save as new type
+        this.drawGame(animationFrames);
+    }
+
+    localStorageLoad() {
+        //Load items from the local storage, error handle
+        let allItems = localStorage.getItem(this.localStorageStateLocation)
+        if (allItems == null) {
+            this.storageStateAllItems = []
+        } else {
+            this.storageStateAllItems = JSON.parse(allItems) as LocalStorageState[]
+        }
+    }
+
+    localStorageSave() {
+        //Save items to the local storage
+        localStorage.setItem(this.localStorageStateLocation, JSON.stringify(this.storageStateAllItems))
+    }
+
+    localStorageClear() {
+        //Clear all items held in local storage
+        localStorage.clear()
+        //Start a new game
+        this.newRandomGame()
+    }
+
+    storageSave(game: Game, type: LocalStorageStateType) {
+        let saveItem: LocalStorageState = {
+            type: type,
+            state: game.state,
+            string: game.stringifyGameState()
+        }
+        //Test if the items has been saved before
+        let lastItem = this.storageStateAllItems[this.storageStateAllItems.length - 1]
+        if (lastItem === undefined || lastItem.string != saveItem.string) {
+            //If there are too many items in storage remove one
+            if (this.storageStateAllItems.length > this.storageStateMaxItems) {
+                this.storageStateAllItems.shift()
+            }
+            //Add item to the storage
+            this.storageStateAllItems.push(saveItem)
+            //Actually save to the local storage
+            this.localStorageSave()
+        }
+    }
+
+    storageLoadCurrent() {
+        if (this.storageStateAllItems.length > 0) {
+            let loadedState = this.storageStateAllItems[this.storageStateAllItems.length - 1]
+            let game = new GameFromState(loadedState.state)
+            let animationFrames = game.calculateStartOptions()
+            this.drawGame(animationFrames)
+        }
+    }
+
+    storageLoadPrevious(type: LocalStorageStateType | undefined) {
+        let loadedState: LocalStorageState | undefined = undefined
+        if (type === undefined) {
+            loadedState = this.storageStateAllItems[this.storageStateAllItems.length - 2]
+            if (loadedState !== undefined) {
+                this.storageStateAllItems = this.storageStateAllItems.slice(0, -1)
+            }
+        } else {
+            for (let i = this.storageStateAllItems.length - 2; i >= 0; i--) {
+                if (this.storageStateAllItems[i].type == type) {
+                    //found a loaded state that meets the criteria
+                    loadedState = this.storageStateAllItems[i]
+                    //Remove all subsequent states
+                    this.storageStateAllItems = this.storageStateAllItems.slice(0, i+1)
+                    break
+                }
+            }
+        }
+        if (loadedState === undefined) {
+            //No state can be loaded, do nothing
+        } else {
+            //Load to the selected state & re-draw game
+            this.localStorageSave()
+            let game = new GameFromState(loadedState.state)
+            let animationFrames = game.calculateStartOptions()
+            this.drawGame(animationFrames)
+        }
     }
 
     drawGame(animationFrames: Array<AnimationFrame>) {
         //Process the animationFrames, leaving the last animation frame game as the display in the end
         this.animationFrames = animationFrames
+        let finalGameAfterAnimation = animationFrames[animationFrames.length - 1].game
         this.processDrawGame()
+        //Save to the local cache if appropriate
+        this.storageSave(finalGameAfterAnimation, "step")
     }
 
     processDrawGame() {
@@ -892,13 +1035,6 @@ class VisualManager {
         //Create and draw the top area
         let topArea = getElementByClass(this.main, 'top-area');
         removeNodeChildren(topArea)
-        // Find and bind refresh button
-        let refreshButton = document.getElementById('refresh') as HTMLDivElement
-        refreshButton.onclick = () => {
-            let game = new RandomGame()
-            let animationFrames = game.calculateStartOptions()
-            this.drawGame(animationFrames);
-        }
         // Free Cells
         for (let i = 0; i < game.numFreeCells; i++) {
             let freeCell = document.createElement("div");
@@ -1057,92 +1193,6 @@ class VisualManager {
     }
 }
 
-let VM = new VisualManager(document.getElementById('main') as HTMLDivElement);
-let loadState = localStorage.getItem("state")
-let game: Game
-let metaAnimationFrames: Array<AnimationFrame>
-if (true && loadState !== null) {
-    game = new GameFromState(JSON.parse(loadState));
-    metaAnimationFrames = game.calculateStartOptions()
-} else {
-    game = new RandomGame();
-    metaAnimationFrames = game.calculateStartOptions()
-}
-VM.drawGame(metaAnimationFrames);
-
-/* 
-// SECTION FOR ATTEMPRITNG TO FIGURE OUT AN EFFICIENT WAY TO MOVE CARDS AS A STACK
-
-function moveCard(fromColumn:Array<SelectionOption>, toColumn: Array<SelectionOption>): [SelectionOption, SelectionOption] {
-    // Modifies the from and the to column in place
-    let lastFrom = fromColumn.pop();
-    if (lastFrom === undefined) {
-        throw new Error("Not expecting empty column");
-    }
-    let lastTo = toColumn[toColumn.length - 1];
-    if (lastTo === undefined) {
-        throw new Error("Not expecting empty column");
-    }
-    toColumn.push({location: lastTo.location, column: lastTo.column, row: lastTo.row + 1});
-    return [lastFrom, lastTo]
-}
-
-// Max move stack:
-// simple move: openCells + open columns + 1
-// secondary move = openCells + open columns < restack; then on the second section openCells + openColumns - 1 + 1
-function recursiveStack(cards: Array<SelectionOption>, targetCard: SelectionOption, freeCells: Array<SelectionOption>, freeColumns: Array<SelectionOption>, targetColumnEmpty: boolean) {
-    // Card selection from high to low
-    // freeCells
-    // freeColumns
-    let moves: Array<[SelectionOption, SelectionOption]> = []
-    let target: Array<SelectionOption> = []
-    let allFree = freeCells.concat(freeColumns)
-    if (cards.length <= allFree.length + 1) {
-        // Play all the cards to piles
-        let i = -1
-        while (cards.length > 1) {
-            i++
-            let card = cards.pop()
-            if (card === undefined) { throw new Error("Unexpected empty cards list") }
-            moves.push([card, allFree[i]])
-        }
-        // Put the final card in the target
-        let card = cards.pop()
-        if (card === undefined) { throw new Error("Unexpected empty cards list") }
-        moves.push([card, targetCard])
-        targetCard = {location: targetCard.location, column: targetCard.column, row: targetCard.row + 1}
-        // Move the rest of the cards back to the target
-        while (i  >= 0) {
-            moves.push([moves[i][1], targetCard])
-            targetCard = {location: targetCard.location, column: targetCard.column, row: targetCard.row + 1}
-            i--
-        }
-    }
-    return moves
-}
-
-let numCards = 4
-let numFreeCells = 2
-let numFreeColumns = 3
-
-let cards: Array<SelectionOption> = []
-for (let i = 0; i < numCards; i++) {
-    cards.push({location: "column", column: 0, row: i+1})
-}
-let targetCard: SelectionOption = {location: "column", column: 1, row: 0}
-let freeCells: Array<SelectionOption> = []
-for (let i = 0; i < numFreeCells; i++) {
-    freeCells.push({location: "freeCell", column: i, row: 0})
-}
-let freeColumns: Array<SelectionOption> = []
-for (let i = 2; i < numFreeColumns + 2; i++) {
-    freeColumns.push({location: "column", column: i, row: 0})
-}
-
-let x = recursiveStack(cards, targetCard, freeCells, freeColumns, false)
-
-*/
-
 function bruteSolver(game: Game, scorecard: Scorecard,
     lookup: Record<string, Scorecard>, winningScorecard: Scorecard): Scorecard {
     //Returns a winningScoreCard if a better solution (or any solution is found)
@@ -1224,14 +1274,14 @@ function bruteSolver(game: Game, scorecard: Scorecard,
 }
 
 // RUN SOLUTION SEARCH
-if (false) { // eslint-disable-line
-    let startingScorecard: Scorecard = { state: game.state, steps: 0, actionList: [] }
-    let winningScorecard: Scorecard = { state: game.state, steps: infiniteSteps, actionList: [] }
-    let lookup: Record<string, Scorecard> = {}
-    let resultScorecard = bruteSolver(game, startingScorecard, lookup, winningScorecard)
-    console.log("RESULT")
-    console.log(resultScorecard)
-}
+// if (false) { // eslint-disable-line
+//     let startingScorecard: Scorecard = { state: game.state, steps: 0, actionList: [] }
+//     let winningScorecard: Scorecard = { state: game.state, steps: infiniteSteps, actionList: [] }
+//     let lookup: Record<string, Scorecard> = {}
+//     let resultScorecard = bruteSolver(game, startingScorecard, lookup, winningScorecard)
+//     console.log("RESULT")
+//     console.log(resultScorecard)
+// }
 
 
 
@@ -1245,4 +1295,15 @@ let testStackMoveOptions1: TestStackMoveOptions = {
     baseDestinationOpen: true
 }
 
-// testStackMove(testStackMoveOptions1)
+let testStackMoveOptions2: TestStackMoveOptions = {
+    baseCardStackCount: 4, //Must be > 0
+    baseOpenColumns: 1, //Must be <= 6
+    baseOpenFreeCells: 1, //Must be <= 4
+    baseOriginOpenAfterMove: true,
+    baseDestinationOpen: false
+}
+
+testStackMove(testStackMoveOptions2)
+console.log(nontrivialLookup)
+
+let VM = new VisualManager(document.getElementById('main') as HTMLDivElement);
