@@ -1,7 +1,7 @@
 * {
     /* Control variables modified by Javascript*/
     /* Other golbal settings and control variables */
-    --card-slide-animation-duration: 0.3s;
+    --card-slide-animation-duration: 0.2s;
     --main-width: 95vw;
     font-family: 'Arial';
     padding: 0;
@@ -25,18 +25,35 @@
     container-type: inline-size;
 }
 
+#title {
+    font-size: 2em;
+    font-weight: bold;
+}
+
+#solver-bar {
+    background-color: lightgray;
+    justify-content: center;
+    font-weight: bold;
+}
+
+#solver-bar>* {
+    margin-left: 5cqw;
+    margin-right: 5cqw;
+}
+
+#title-bar {
+    justify-content: space-between;
+}
+
 .topbar {
     display: flex;
     align-items: center;
     /* background-color: lightblue; */
-    font-size: 2em;
-    font-weight: bold;
-    justify-content: space-between;
     width: 100cqw;
 }
 
 .topbar-button {
-    height: 0.8em
+    height: 1.6em
 }
 
 /* GAME AREAS */

@@ -1,10 +1,12 @@
 //Control variable definitons
 let infiniteSteps = 10 ** 6 //Define a depth for infinity for comparisons, big number
+let foceFullStackMoveVisual = false //If true, visualManager will force only full stack moves
+let stopSolve = false //When true, stops the bruteSolver from running
 let defaultGameOptions: GameOptions = {
-    numColumns: 8,
-    numFreeCells: 4,
-    hardColumns: false,
-    autoFoundations: true
+    numColumns: 8, //Number of stack columns
+    numFreeCells: 4, //Number of freeCells
+    hardColumns: false, //NOT USED, but would only allow Kings on open columns
+    autoFoundations: true, //Automatically move cards to the foundation spaces
 }
 
 type SelectionType = "none" | "start" | "end" | "debug" //TODO - remove debug
@@ -244,6 +246,8 @@ function stackMove(cardStack: Array<number | Card>, origin: ColumnLetter | Selec
       move cardStack[-1] to destination
       re-pack cardStack[:-1] in reverse order to destination
     Uses a lookup dictionary to avoid more calls than necessary to the non-trivial solution
+
+    TODO: implement unstack only option for the AI to use when stack required is enabled
     */
     //Setup the return
     let moveCommands: Array<MoveCommand> = []
@@ -354,9 +358,6 @@ function stackMove(cardStack: Array<number | Card>, origin: ColumnLetter | Selec
         }
     }
     //Add or replace the best move found in the lookup dictionary
-    if (lookupKey == "cards:4, freeCell:1, column:1, originOpen:true") {
-        console.log("got here")
-    }
     if (bestMoveCommands.length === 0) {
         nontrivialLookup[lookupKey] = { i: 0, steps: 0 }
     } else {
@@ -545,7 +546,7 @@ class Game implements GameOptions {
                 }
             }
         } else {
-            console.log("Invalid Selection", selection)
+            // console.log("Invalid Selection", selection)
             // Clear selection and do a new start selection
             animationFrames.push(...this.calculateStartOptions())
         }
@@ -594,50 +595,53 @@ class Game implements GameOptions {
             }
         }
         //columns
+        //Iterate through each column
         for (let i = 0; i < this.numColumns; i++) {
-            let lastIndex = this.state.columns[i].length - 1
-            let card = this.state.columns[i][lastIndex]
-            if (card.value !== 0) {
-                //Calcualte options for the bottom card of the column
-                let endOptions = this.calculateEndOptions({ location: "column", column: i, row: lastIndex }, true)
-                if (endOptions.length > 0) {
-                    let selection: SelectionOption = { location: "column", column: i, row: lastIndex }
-                    options.push(selection)
-                    card.selectionType = "end"
-                    // Auto move cards to the foundation if appropriate
-                    if (this.autoFoundations === true) {
-                        for (let option of endOptions) {
-                            if (option.location === "foundation") {
-                                autoFoundationStart = selection
-                                autoFoundationEnd = option
-                            }
+            let lastIndex = this.state.columns[i].length - 1 //last index of the column
+            let card = this.state.columns[i][lastIndex] //last card of the column
+            //Stop looking if the card Value is zero
+            if (card.value == 0) {
+                continue
+            }
+            //Calcualte options for the bottom card of the column
+            let endOptions = this.calculateEndOptions({ location: "column", column: i, row: lastIndex }, true)
+            if (endOptions.length > 0) {
+                let selection: SelectionOption = { location: "column", column: i, row: lastIndex }
+                options.push(selection)
+                card.selectionType = "end"
+                // Auto move cards to the foundation if appropriate
+                if (this.autoFoundations === true) {
+                    for (let option of endOptions) {
+                        if (option.location === "foundation") { //Only ever true once per option
+                            autoFoundationStart = selection
+                            autoFoundationEnd = option
+                            break
                         }
                     }
                 }
-                //See if there is an oppertunity to move more of the stack
-                let stackCheckFlag = true
-                let cardIndex = lastIndex - 1
-                let previousCard = card
-                while (stackCheckFlag && cardIndex > 0) {
-                    let checkCard = this.state.columns[i][cardIndex]
-                    if (isLower(checkCard, previousCard)) {
-                        //checkCard.selectionType = "debug"
-                        //Calculate end options for the cards
-                        let stackHeadEndOptions = this.calculateEndOptions(
-                            { location: "column", column: i, row: cardIndex },
-                            true
-                        )
-                        if (stackHeadEndOptions.length > 0) {
-                            options.push({ location: "column", column: i, row: cardIndex })
-                            checkCard.selectionType = "end"
-                        }
-                    } else {
-                        stackCheckFlag = false //Did not match, end iteration
+            }
+            //See if there is an oppertunity to move more of the stack
+            let stackCheckFlag = true
+            let cardIndex = lastIndex - 1
+            let previousCard = card
+            while (stackCheckFlag && cardIndex > 0) {
+                let checkCard = this.state.columns[i][cardIndex]
+                if (isLower(checkCard, previousCard)) {
+                    //Calculate end options for the cards
+                    let stackHeadEndOptions = this.calculateEndOptions(
+                        { location: "column", column: i, row: cardIndex },
+                        true
+                    )
+                    if (stackHeadEndOptions.length > 0) {
+                        options.push({ location: "column", column: i, row: cardIndex })
+                        checkCard.selectionType = "end"
                     }
-                    //Iterate
-                    previousCard = checkCard
-                    cardIndex -= 1
+                } else {
+                    stackCheckFlag = false //Did not match, end iteration
                 }
+                //Iterate
+                previousCard = checkCard
+                cardIndex -= 1
             }
         }
         // set the current options
@@ -780,7 +784,7 @@ class Game implements GameOptions {
     checkForWin(): boolean {
         //Check if the current position of the game is winning, by checking if no cards remain to be placed in the foundation
         for (let freeCell of this.state.freeCells) {
-            if (freeCell.value == 0) {
+            if (freeCell.value !== 0) {
                 return false
             }
         }
@@ -796,6 +800,27 @@ class Game implements GameOptions {
         // Check if the game is a loss by checking if there are any selection options
         return this.selectionOptions.length == 0
     }
+
+    forceFullStackMove() {
+        //Function to remove options that are not moving a full stack from the startOptions list
+        if (this.currentSelection !== undefined) {
+            //In the endOption state, do nothing
+            return
+        }
+        //Iterate through the selection Options
+        for (let i = this.selectionOptions.length - 1; i >= 0; i--) {
+            let selection = this.selectionOptions[i]
+            if (selection.location == "column") {
+                let card = this.getCardFromSelection(selection)
+                let previousCard = this.getCardFromSelection({ location: "column", column: selection.column, row: selection.row - 1 })
+                if (isHigher(card, previousCard)) {
+                    //not the head of the stack remove this selectionOption & remove graphics
+                    card.selectionType = "none"
+                    this.selectionOptions.splice(i, 1)
+                }
+            }
+        }
+    }
 }
 
 class GameFromGame extends Game {
@@ -805,7 +830,7 @@ class GameFromGame extends Game {
                 numColumns: parentGame.numColumns,
                 numFreeCells: parentGame.numFreeCells,
                 hardColumns: parentGame.hardColumns,
-                autoFoundations: parentGame.autoFoundations
+                autoFoundations: parentGame.autoFoundations,
             },
             JSON.parse(JSON.stringify(parentGame.state)), //state
             JSON.parse(JSON.stringify(parentGame.selectionOptions)), //selectionOptions
@@ -824,7 +849,7 @@ class GameFromState extends Game {
                 numColumns: state.columns.length,
                 numFreeCells: state.freeCells.length,
                 hardColumns: defaultGameOptions.hardColumns,
-                autoFoundations: defaultGameOptions.autoFoundations
+                autoFoundations: defaultGameOptions.autoFoundations,
             },
             JSON.parse(JSON.stringify(state)), //state
             [], //selectionOptions
@@ -884,11 +909,13 @@ class VisualManager {
     storageStateAllItems: LocalStorageState[]
     localStorageStateLocation = "stateItems"
     storageStateMaxItems = 200
+    displayedGame: Game | undefined //Currently displayed game
 
     constructor(main: HTMLDivElement) {
         this.main = main;
         this.animationFrames = []
         this.drawingInProgressFlag = false
+        this.displayedGame = undefined
         //Load the local storage state if it exists
         this.storageStateAllItems = []
         this.localStorageLoad() //Grab from the localStorage
@@ -991,7 +1018,7 @@ class VisualManager {
                     //found a loaded state that meets the criteria
                     loadedState = this.storageStateAllItems[i]
                     //Remove all subsequent states
-                    this.storageStateAllItems = this.storageStateAllItems.slice(0, i+1)
+                    this.storageStateAllItems = this.storageStateAllItems.slice(0, i + 1)
                     break
                 }
             }
@@ -1011,6 +1038,10 @@ class VisualManager {
         //Process the animationFrames, leaving the last animation frame game as the display in the end
         this.animationFrames = animationFrames
         let finalGameAfterAnimation = animationFrames[animationFrames.length - 1].game
+        //Test function to only allow the player to perform fullStackMoves -- usually false
+        if (foceFullStackMoveVisual) {
+            finalGameAfterAnimation.forceFullStackMove()
+        }
         this.processDrawGame()
         //Save to the local cache if appropriate
         this.storageSave(finalGameAfterAnimation, "step")
@@ -1022,10 +1053,12 @@ class VisualManager {
         //Pull the next frame out of the buffer and process 
         let animationFrame = this.animationFrames.shift()
         if (animationFrame === undefined) {
+            //There are no more animationFrames to display
             return
         }
         //Process inputs
         let game: Game = animationFrame.game
+        this.displayedGame = game
         let card = animationFrame.movedCard
         let fromCardPositionRect: DOMRect | undefined
         if (card !== undefined) {
@@ -1191,6 +1224,15 @@ class VisualManager {
         // Return the card for adding an onclick event
         return card
     }
+
+    easyDrawState(state: GameState) {
+        let game = new GameFromState(state)
+        this.drawGame([{ movedCard: undefined, game: game }])
+    }
+
+    easyDrawGame(game: Game) {
+        this.drawGame([{ movedCard: undefined, game: game }])
+    }
 }
 
 function bruteSolver(game: Game, scorecard: Scorecard,
@@ -1202,6 +1244,10 @@ function bruteSolver(game: Game, scorecard: Scorecard,
     // Stack moving improvement
     // Single card in foundation storage rules (stop moving back and forth)
     //
+    if (stopSolve) {
+        //Force stop solve without crashing the browser (hopefully)
+        return winningScorecard
+    }
     //Check if the path to victory is too long and should truncate
     if (winningScorecard.steps < infiniteSteps) {
         // Minimum remaining steps is the number of cards in the columns
@@ -1210,14 +1256,14 @@ function bruteSolver(game: Game, scorecard: Scorecard,
             (partialSum, column) => partialSum + column.length - 1, 0)
         if (scorecard.steps + minRemainingSteps >= winningScorecard.steps) {
             //impossible to complete in fewer steps than the found winning state, break
-            console.log("Perfect play from this scorecard requires too many steps")
+            // console.log("Perfect play from this scorecard requires too many steps")
             return winningScorecard
         }
     }
     //Check if the game is won
     if (game.checkForWin()) {
         // Add to the lookup as a win condition
-        console.log("Found winning scorecard", scorecard)
+        console.log("FOUND WINNING SCORECARD", scorecard)
         if (scorecard.steps < winningScorecard.steps) {
             // Replace the winning scorecard
             winningScorecard = scorecard
@@ -1226,7 +1272,7 @@ function bruteSolver(game: Game, scorecard: Scorecard,
     }
     //Check if the game is lost
     if (game.checkForLoss()) {
-        //console.log("Found losing scorecard", scorecard)
+        // console.log("Found losing scorecard", scorecard)
         return winningScorecard
     }
     //Check if self is in the bruteSolver
@@ -1242,10 +1288,10 @@ function bruteSolver(game: Game, scorecard: Scorecard,
         }
     } else {
         //Gamestring not encountered before
-        console.log(scorecard.steps, "gameString", gameString)
         lookup[gameString] = scorecard
-        // vm.drawGame(game)
     }
+    //Reduce number of move options by only allowing moves of full stacks
+    game.forceFullStackMove()
     //Iterate through the next scorecard options
     for (let intermediarySelectionOption of game.selectionOptions) {
         //Select from location
@@ -1273,20 +1319,8 @@ function bruteSolver(game: Game, scorecard: Scorecard,
     return winningScorecard
 }
 
-// RUN SOLUTION SEARCH
-// if (false) { // eslint-disable-line
-//     let startingScorecard: Scorecard = { state: game.state, steps: 0, actionList: [] }
-//     let winningScorecard: Scorecard = { state: game.state, steps: infiniteSteps, actionList: [] }
-//     let lookup: Record<string, Scorecard> = {}
-//     let resultScorecard = bruteSolver(game, startingScorecard, lookup, winningScorecard)
-//     console.log("RESULT")
-//     console.log(resultScorecard)
-// }
-
-
-
-
-
+/*
+// TEST STACK MOVE CODE
 let testStackMoveOptions1: TestStackMoveOptions = {
     baseCardStackCount: 10, //Must be > 0
     baseOpenColumns: 4, //Must be <= 6
@@ -1294,7 +1328,6 @@ let testStackMoveOptions1: TestStackMoveOptions = {
     baseOriginOpenAfterMove: false,
     baseDestinationOpen: true
 }
-
 let testStackMoveOptions2: TestStackMoveOptions = {
     baseCardStackCount: 4, //Must be > 0
     baseOpenColumns: 1, //Must be <= 6
@@ -1302,8 +1335,31 @@ let testStackMoveOptions2: TestStackMoveOptions = {
     baseOriginOpenAfterMove: true,
     baseDestinationOpen: false
 }
-
-testStackMove(testStackMoveOptions2)
-console.log(nontrivialLookup)
+// testStackMove(testStackMoveOptions2)
+// console.log(nontrivialLookup)
+*/
 
 let VM = new VisualManager(document.getElementById('main') as HTMLDivElement);
+
+async function bruteSolverWrapper(game: Game) {
+    //Find and bind a stop button - which stops the calculation
+    let clearButton = document.getElementById("stop") as HTMLDivElement
+    clearButton.onclick = () => {
+        console.log("SETTING STOP SOLVE")
+        stopSolve = true
+    }
+    let startingScorecard: Scorecard = { state: game.state, steps: 0, actionList: [] }
+    let winningScorecard: Scorecard = { state: game.state, steps: infiniteSteps, actionList: [] }
+    let lookup: Record<string, Scorecard> = {}
+    let resultScorecard = bruteSolver(game, startingScorecard, lookup, winningScorecard)
+    console.log("RESULT")
+    console.log(resultScorecard)
+}
+// RUN SOLUTION SEARCH
+// window.onload = () => {
+//     console.log("RUNNING SOLVER")
+//     if (VM.displayedGame !== undefined) { // eslint-disable-line
+//         bruteSolverWrapper(new GameFromGame(VM.displayedGame))
+//     }
+// }
+

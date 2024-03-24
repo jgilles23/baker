@@ -13,14 +13,21 @@
 <body>
     <div class="main" id="main">
         <!-- Topbar -->
-        <div class="topbar">
-            <div>Baker's Game</div>
+        <div class="topbar" id="title-bar">
+            <div id="title">Baker's Game</div>
             <div>
+                <img id="stop" src="./icons/stop-x.png" class="topbar-button"></img>
                 <img id="clear" src="./icons/clear-x.png" class="topbar-button"></img>
                 <img id="restart" src="./icons/double-back-arrow.png" class="topbar-button"></img>
                 <img id="undo" src="./icons/back-arrow.png" class="topbar-button"></img>
                 <img id="refresh" src="./icons/redo-arrow.png" class="topbar-button"></img>
             </div>
+        </div>
+        <div class="topbar" id="solver-bar">
+            <div>Solver:</div>
+            <div id="solver-status"></div>
+            <img id="next-solver" src="./icons/double-arrow-right.png" class="topbar-button"></img>
+            <img id="all-solver" src="./icons/double-arrow-bar-right.png" class="topbar-button"></img>
         </div>
         <div class="game">
             <div class="top-area">
