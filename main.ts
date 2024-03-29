@@ -2,7 +2,7 @@
 let infiniteSteps = 10 ** 6 //Define a depth for infinity for comparisons, big number
 let foceFullStackMoveVisual = false //If true, visualManager will force only full stack moves
 let stopSolve = false //When true, stops the bruteSolver from running
-let defaultGameOptions: GameOptions = {
+let settings = {
     numColumns: 8, //Number of stack columns
     numFreeCells: 4, //Number of freeCells
     autoFoundations: true, //Automatically move cards to the foundation spaces
@@ -13,7 +13,6 @@ type SelectionType = "none" | "start" | "end" | "debug" //TODO - remove debug
 interface Card {
     value: number; //0 for placeholder, otherwise 1 for Ace to 13 for King
     suit: number; //0 for placeholder, otherwise 1: spades, 2: diamonds, 3: clubs, 4: hearts
-    selectionType: SelectionType;
 }
 
 interface GameState {
@@ -26,7 +25,7 @@ interface GameState {
 interface SelectionOption {
     location: "column" | "freeCell" | "foundation"
     column: number //column number in column, freeCell, or foundation
-    row: number //0 for the base, 1 for the first card of column or fundation
+    row: number //0 for the base, 1 for the first card of column or foundation
 }
 
 interface Scorecard {
@@ -34,12 +33,6 @@ interface Scorecard {
     steps: number //Count the number of steps to the current state
     actionList: Array<SelectionOption> //List of actions taken to get to current scorecard
     //Action 0 is the first action taken to get to current state d
-}
-
-interface GameOptions {
-    numColumns: number;
-    numFreeCells: number;
-    autoFoundations: boolean;
 }
 
 type CardDisplayStyle = "full" | "partial" | "covered"
@@ -212,157 +205,8 @@ class LocationSet {
 
 //Lookup dictionary to avoid computing the same info multiple times
 interface NontrivialLookupValue {
-    i: number, //Set to 0 if impossible
-    steps: number //Set to 0 if iompssible
-}
-function stringifyNontrivilaLookupKey(numCards: number, openLocations: LocationSet, originOpenAfterMove: boolean, destinationOpenBeforeMove: boolean) {
-    return `cards:${numCards}, freeCell:${openLocations.freeCells.length}, column:${openLocations.columns.length}, originOpen:${originOpenAfterMove}, destinationOpen:${destinationOpenBeforeMove}`
-}
-let nontrivialLookup: Record<string, NontrivialLookupValue> = {}
-
-function stackMove(cardStack: Array<number | Card>, origin: ColumnLetter | SelectionOption, startOpenLocations: LocationSet,
-    destination: ColumnLetter | SelectionOption, originOpenAfterMove: boolean, depth: number): Array<MoveCommand> {
-    /*
-    Function to return the sequence of moves that takes a stack of cards from origin to destination
-     Uses the startOpenLocations to determine which locations are open for moves before starting
-     and after completion
-     cardStack: cards that need to be moved ordered from highest to lowest
-    General form of non-trivial recursive move:
-     Iterate though (i,j) integer partitions of cardStack
-     Definitons:
-      i: first section of cards to move, i > 0
-      j: second section of cards to move, j > 0
-      i + j = length of cardStack
-      midpoint: column from "startOpenLocations" that is not the "destination"
-     Algorithm:
-      1) cardStack[j:] from "origin" using "startOpenLocations" -> "midpoint" leaving (secondOpenLocations: startOpenLocations - midpoint)
-      2) cardStack[:j] from "origin" using "secondOpenLocations" -> "destination" leaving (thirdOpenLocations: secondOpenLocations + [origin if originOpenAfterMove])
-      3) cardStack[j:] from "midpoint" using "thirdOpenLocations" -> "destination" leaving (endOpenLocations: thirdOpenLocations + midpoint)
-    General form of the trivial move:
-     trivial move applies when startOpenLocation.count() >= cardStack.length
-     Algorithm:
-      unpack cardStack[:-1] to freeCells then open columns exclusive of destination
-      move cardStack[-1] to destination
-      re-pack cardStack[:-1] in reverse order to destination
-    Uses a lookup dictionary to avoid more calls than necessary to the non-trivial solution
-
-    TODO: implement unstack only option for the AI to use when stack required is enabled
-    */
-    //Setup the return
-    let moveCommands: Array<MoveCommand> = []
-    //TRIVIAL SOLUTION
-    if (startOpenLocations.count(destination) >= cardStack.length - 1) {
-        //Remove the destination from the open locations (if it exists), setup intermediate destinations
-        let locations = startOpenLocations.removeColumn(destination)
-        let intermDestination: FreeCellLetter | ColumnLetter | undefined = undefined
-        //unpack
-        for (let x = cardStack.length - 1; x > 0; x--) {
-            [intermDestination, locations] = locations.popFreeCellThenColumn()
-            if (intermDestination !== undefined) {
-                moveCommands.push({ start: origin, end: intermDestination, card: cardStack[x] })
-            } else {
-                throw Error("Expected to have avalaible free cell or column")
-            }
-        }
-        //move last card
-        moveCommands.push({ start: origin, end: destination, card: cardStack[0] })
-        //re-pack
-        for (let x = cardStack.length - 2; x >= 0; x--) {
-            moveCommands.push({ start: moveCommands[x].end, end: destination, card: moveCommands[x].card })
-        }
-        return moveCommands
-    }
-    //NONTRIVIAL SOLUTION - funcationally in an "else" statement
-    let bestMoveCommands: MoveCommand[] = [] //Declare location to store the best move
-    let bestMoveI: number = 0
-    //Gather list of possible i partition values
-    let iOptionsArray: number[]
-    let destinationOpenBeforeMove: boolean = startOpenLocations.indexOfColumnInArray(startOpenLocations.columns, destination) >= 0
-    let lookupKey = stringifyNontrivilaLookupKey(cardStack.length, startOpenLocations, originOpenAfterMove, destinationOpenBeforeMove)
-    if (lookupKey in nontrivialLookup) {
-        //This combination has been encountred before, only check the known best "i" value
-        let iReturn = nontrivialLookup[lookupKey].i
-        if (iReturn === 0) {
-            //Non-solvable
-            return []
-        } else {
-            iOptionsArray = [iReturn]
-        }
-    } else {
-        //Case not encountered before, compute from all i values
-        iOptionsArray = []
-        for (let i = 1; i <= cardStack.length - 1; i++) {
-            iOptionsArray.push(i) //E.g. if length is 4, i is an element of [1,2,3]
-        }
-    }
-    for (let i of iOptionsArray) {
-        let j: number = cardStack.length - i
-        //Resursivly call stackMove to test if solution is valid
-        let newMoveCommands: MoveCommand[] = []
-        let returnedMoveCommands: MoveCommand[]
-        //STEP 1, unpack
-        let [midpoint, secondOpenLocations] = startOpenLocations.popColumn(destination) //destination and midpoint cannot be the same
-        if (midpoint === undefined) {
-            //No midpoint avaliable, only trivial solution is allowed
-            continue
-        }
-        returnedMoveCommands = stackMove(
-            cardStack.slice(j),
-            origin,
-            startOpenLocations,
-            midpoint,
-            false,
-            depth + 1,
-        )
-        if (returnedMoveCommands.length === 0) {
-            continue //Move not possible
-        }
-        newMoveCommands.push(...returnedMoveCommands)
-        //STEP 2, move
-        returnedMoveCommands = stackMove(
-            cardStack.slice(0, j),
-            origin,
-            secondOpenLocations,
-            destination,
-            originOpenAfterMove,
-            depth + 1,
-        )
-        if (returnedMoveCommands.length === 0) {
-            continue //Move not possible
-        }
-        newMoveCommands.push(...returnedMoveCommands)
-        //STEP 3 re-pack
-        let thirdOpenLocations = startOpenLocations.removeColumn(midpoint)
-        thirdOpenLocations = thirdOpenLocations.removeColumn(destination)
-        if (originOpenAfterMove) {
-            //Add origin back to list of possible moves if nothing left there
-            thirdOpenLocations = thirdOpenLocations.addColumn(origin)
-        }
-        returnedMoveCommands = stackMove(
-            cardStack.slice(j),
-            midpoint,
-            thirdOpenLocations,
-            destination,
-            true,
-            depth + 1,
-        )
-        if (returnedMoveCommands.length === 0) {
-            continue //Move not possible
-        }
-        newMoveCommands.push(...returnedMoveCommands)
-        //Check if this is the best solution found so far
-        if (newMoveCommands.length < bestMoveCommands.length || bestMoveCommands.length === 0) {
-            bestMoveCommands = newMoveCommands
-            bestMoveI = i
-        }
-    }
-    //Add or replace the best move found in the lookup dictionary
-    if (bestMoveCommands.length === 0) {
-        nontrivialLookup[lookupKey] = { i: 0, steps: 0 }
-    } else {
-        nontrivialLookup[lookupKey] = { i: bestMoveI, steps: bestMoveCommands.length }
-    }
-    return bestMoveCommands
+    i: number, //Set to 0 if impossible; //first section of cards to move 
+    steps: number //Set to 0 if impossible, //Steps at end of move
 }
 
 interface TestStackMoveOptions {
@@ -373,46 +217,215 @@ interface TestStackMoveOptions {
     baseDestinationOpen: boolean //true if nothin on the destination
 }
 
-function testStackMove(options: TestStackMoveOptions) {
-    //Test function for stackMove
-    console.log("Testing stackMove with options:", options)
-    //Prepare and run the stackMove
-    let baseOrigin: ColumnLetter = "A"
-    let baseDestination: ColumnLetter = "B"
-    let baseCardStack: Array<number> = []
-    for (let x = options.baseCardStackCount - 1; x >= 0; x--) {
-        baseCardStack.push(x)
+class StackMover {
+    nontrivialLookup: Record<string, NontrivialLookupValue>
+    constructor() {
+        this.nontrivialLookup = {}
     }
-    let baseOpenLocations = new LocationSet(
-        "CDEFGH".slice(0, options.baseOpenColumns).split("") as Array<ColumnLetter>,
-        "abcd".slice(0, options.baseOpenFreeCells).split("") as Array<FreeCellLetter>
-    )
-    if (options.baseDestinationOpen) {
-        baseOpenLocations = baseOpenLocations.addColumn(baseDestination)
+
+    stringifyNontrivilaLookupKey(numCards: number, openLocations: LocationSet, originOpenAfterMove: boolean, destinationOpenBeforeMove: boolean) {
+        return `cards:${numCards}, freeCell:${openLocations.freeCells.length}, column:${openLocations.columns.length}, originOpen:${originOpenAfterMove}, destinationOpen:${destinationOpenBeforeMove}`
     }
-    let baseMoveCommands = stackMove(baseCardStack, baseOrigin, baseOpenLocations, baseDestination, options.baseOriginOpenAfterMove, 0)
-    console.log("  baseMoveCommands", baseMoveCommands)
-    console.log("  nontrivialLookup number of keys:", Object.keys(nontrivialLookup).length)
+
+    stackMoveFastCheck(cardStack: Array<number | Card>, origin: ColumnLetter | SelectionOption, startOpenLocations: LocationSet,
+        destination: ColumnLetter | SelectionOption, originOpenAfterMove: boolean, depth: number): boolean {
+        //Same as stackMove, but relies upon the lookup when possible
+        //Returns ONLY if the stack move is possible, not the required MoveCommands
+        //TRIVIAL - one card per stack solution
+        if (startOpenLocations.count(destination) >= cardStack.length - 1) {
+            return true
+        }
+        //NON TRIVIAL SOLUTION
+        let destinationOpenBeforeMove: boolean = startOpenLocations.indexOfColumnInArray(startOpenLocations.columns, destination) >= 0
+        let lookupKey = this.stringifyNontrivilaLookupKey(cardStack.length, startOpenLocations, originOpenAfterMove, destinationOpenBeforeMove)
+        if (lookupKey in this.nontrivialLookup) {
+            //This combination has been encountred before, only check the known best "i" value
+            return this.nontrivialLookup[lookupKey].i > 0 //i is 0 when impossible, otherwise move is possible
+        } else {
+            //Case not encountered before, compute from all i values
+            let fullMoves = this.stackMove(cardStack, origin, startOpenLocations, destination, originOpenAfterMove, depth)
+            return fullMoves.length > 0 //Lenght 0 array, means not possible, if has length 
+        }
+    }
+
+    stackMove(cardStack: Array<number | Card>, origin: ColumnLetter | SelectionOption, startOpenLocations: LocationSet,
+        destination: ColumnLetter | SelectionOption, originOpenAfterMove: boolean, depth: number): Array<MoveCommand> {
+        /*
+        Function to return the sequence of moves that takes a stack of cards from origin to destination
+         Uses the startOpenLocations to determine which locations are open for moves before starting
+         and after completion
+         cardStack: cards that need to be moved ordered from highest to lowest
+        General form of non-trivial recursive move:
+         Iterate though (i,j) integer partitions of cardStack
+         Definitons:
+          i: first section of cards to move, i > 0
+          j: second section of cards to move, j > 0
+          i + j = length of cardStack
+          midpoint: column from "startOpenLocations" that is not the "destination"
+         Algorithm:
+          1) cardStack[j:] from "origin" using "startOpenLocations" -> "midpoint" leaving (secondOpenLocations: startOpenLocations - midpoint)
+          2) cardStack[:j] from "origin" using "secondOpenLocations" -> "destination" leaving (thirdOpenLocations: secondOpenLocations + [origin if originOpenAfterMove])
+          3) cardStack[j:] from "midpoint" using "thirdOpenLocations" -> "destination" leaving (endOpenLocations: thirdOpenLocations + midpoint)
+        General form of the trivial move:
+         trivial move applies when startOpenLocation.count() >= cardStack.length
+         Algorithm:
+          unpack cardStack[:-1] to freeCells then open columns exclusive of destination
+          move cardStack[-1] to destination
+          re-pack cardStack[:-1] in reverse order to destination
+        Uses a lookup dictionary to avoid more calls than necessary to the non-trivial solution
+    
+        TODO: implement unstack only option for the AI to use when stack required is enabled
+        */
+        //Setup the return
+        let moveCommands: Array<MoveCommand> = []
+        //TRIVIAL SOLUTION - move one card at a time to separate stacks
+        if (startOpenLocations.count(destination) >= cardStack.length - 1) {
+            //Remove the destination from the open locations (if it exists), setup intermediate destinations
+            let locations = startOpenLocations.removeColumn(destination)
+            let intermDestination: FreeCellLetter | ColumnLetter | undefined = undefined
+            //unpack
+            for (let x = cardStack.length - 1; x > 0; x--) {
+                [intermDestination, locations] = locations.popFreeCellThenColumn()
+                if (intermDestination !== undefined) {
+                    moveCommands.push({ start: origin, end: intermDestination, card: cardStack[x] })
+                } else {
+                    throw Error("Expected to have avalaible free cell or column")
+                }
+            }
+            //move last card
+            moveCommands.push({ start: origin, end: destination, card: cardStack[0] })
+            //re-pack
+            for (let x = cardStack.length - 2; x >= 0; x--) {
+                moveCommands.push({ start: moveCommands[x].end, end: destination, card: moveCommands[x].card })
+            }
+            return moveCommands
+        }
+        //NONTRIVIAL SOLUTION - funcationally in an "else" statement
+        let bestMoveCommands: MoveCommand[] = [] //Declare location to store the best move
+        let bestMoveI: number = 0
+        //Gather list of possible i partition values
+        let iOptionsArray: number[]
+        let destinationOpenBeforeMove: boolean = startOpenLocations.indexOfColumnInArray(startOpenLocations.columns, destination) >= 0
+        let lookupKey = this.stringifyNontrivilaLookupKey(cardStack.length, startOpenLocations, originOpenAfterMove, destinationOpenBeforeMove)
+        if (lookupKey in this.nontrivialLookup) {
+            //This combination has been encountred before, only check the known best "i" value
+            let iReturn = this.nontrivialLookup[lookupKey].i
+            if (iReturn === 0) {
+                //Non-solvable
+                return []
+            } else {
+                iOptionsArray = [iReturn]
+            }
+        } else {
+            //Case not encountered before, compute from all i values
+            iOptionsArray = []
+            for (let i = 1; i <= cardStack.length - 1; i++) {
+                iOptionsArray.push(i) //E.g. if length is 4, i is an element of [1,2,3]
+            }
+        }
+        for (let i of iOptionsArray) {
+            let j: number = cardStack.length - i
+            //Resursivly call stackMove to test if solution is valid
+            let newMoveCommands: MoveCommand[] = []
+            let returnedMoveCommands: MoveCommand[]
+            //STEP 1, unpack
+            let [midpoint, secondOpenLocations] = startOpenLocations.popColumn(destination) //destination and midpoint cannot be the same
+            if (midpoint === undefined) {
+                //No midpoint avaliable, only trivial solution is allowed
+                continue
+            }
+            returnedMoveCommands = this.stackMove(
+                cardStack.slice(j),
+                origin,
+                startOpenLocations,
+                midpoint,
+                false,
+                depth + 1,
+            )
+            if (returnedMoveCommands.length === 0) {
+                continue //Move not possible
+            }
+            newMoveCommands.push(...returnedMoveCommands)
+            //STEP 2, move
+            returnedMoveCommands = this.stackMove(
+                cardStack.slice(0, j),
+                origin,
+                secondOpenLocations,
+                destination,
+                originOpenAfterMove,
+                depth + 1,
+            )
+            if (returnedMoveCommands.length === 0) {
+                continue //Move not possible
+            }
+            newMoveCommands.push(...returnedMoveCommands)
+            //STEP 3 re-pack
+            let thirdOpenLocations = startOpenLocations.removeColumn(midpoint)
+            thirdOpenLocations = thirdOpenLocations.removeColumn(destination)
+            if (originOpenAfterMove) {
+                //Add origin back to list of possible moves if nothing left there
+                thirdOpenLocations = thirdOpenLocations.addColumn(origin)
+            }
+            returnedMoveCommands = this.stackMove(
+                cardStack.slice(j),
+                midpoint,
+                thirdOpenLocations,
+                destination,
+                true,
+                depth + 1,
+            )
+            if (returnedMoveCommands.length === 0) {
+                continue //Move not possible
+            }
+            newMoveCommands.push(...returnedMoveCommands)
+            //Check if this is the best solution found so far
+            if (newMoveCommands.length < bestMoveCommands.length || bestMoveCommands.length === 0) {
+                bestMoveCommands = newMoveCommands
+                bestMoveI = i
+            }
+        }
+        //Add or replace the best move found in the lookup dictionary
+        if (bestMoveCommands.length === 0) {
+            this.nontrivialLookup[lookupKey] = { i: 0, steps: 0 }
+        } else {
+            this.nontrivialLookup[lookupKey] = { i: bestMoveI, steps: bestMoveCommands.length }
+        }
+        return bestMoveCommands
+    }
+
+    testStackMove(options: TestStackMoveOptions) {
+        //Test function for stackMove
+        console.log("Testing stackMove with options:", options)
+        //Prepare and run the stackMove
+        let baseOrigin: ColumnLetter = "A"
+        let baseDestination: ColumnLetter = "B"
+        let baseCardStack: Array<number> = []
+        for (let x = options.baseCardStackCount - 1; x >= 0; x--) {
+            baseCardStack.push(x)
+        }
+        let baseOpenLocations = new LocationSet(
+            "CDEFGH".slice(0, options.baseOpenColumns).split("") as Array<ColumnLetter>,
+            "abcd".slice(0, options.baseOpenFreeCells).split("") as Array<FreeCellLetter>
+        )
+        if (options.baseDestinationOpen) {
+            baseOpenLocations = baseOpenLocations.addColumn(baseDestination)
+        }
+        let baseMoveCommands = this.stackMove(baseCardStack, baseOrigin, baseOpenLocations, baseDestination, options.baseOriginOpenAfterMove, 0)
+        console.log("  baseMoveCommands", baseMoveCommands)
+        console.log("  nontrivialLookup number of keys:", Object.keys(this.nontrivialLookup).length)
+    }
 }
 
-class Game implements GameOptions {
-    //GameOptions
-    numColumns: number;
-    numFreeCells: number;
-    autoFoundations: boolean;
+class Game {
     //Other attributes
     state: GameState;
     selectionOptions: Array<SelectionOption>; //Vaid "select()" Options
     currentSelection: SelectionOption | undefined; //Origin when moving a card
 
-    constructor(options: GameOptions, state: GameState,
+    constructor(state: GameState,
         selectionOptions: Array<SelectionOption>, currentSelection: SelectionOption | undefined) {
         //Game Class - for holding state of the game, any relevant options, and provides methods
         // for updating and changing the state of the game
-        //Unpack options
-        this.numColumns = options.numColumns
-        this.numFreeCells = options.numFreeCells
-        this.autoFoundations = options.autoFoundations
         //Assign state
         this.state = state
         //Assign selection Options & current selection
@@ -438,26 +451,10 @@ class Game implements GameOptions {
     }
 
     clearSelection() {
-        //Visually & programatically clear the current selection
-        this.setSelectionTypeForOptions("none", this.selectionOptions) //visually de-select all cards
+        //Programatically clear the current selection
         this.selectionOptions = [] //Reset selection options
         if (this.currentSelection != undefined) {
-            this.setSelectionTypeForOptions("none", [this.currentSelection]) //visually clear current selection
             this.currentSelection = undefined //reset current selection
-        }
-        //Clear all selections
-        for (let card of this.state.freeCells) {
-            card.selectionType = "none"
-        }
-        for (let foundation of this.state.foundations) {
-            for (let card of foundation) {
-                card.selectionType = "none"
-            }
-        }
-        for (let column of this.state.columns) {
-            for (let card of column) {
-                card.selectionType = "none"
-            }
         }
     }
 
@@ -476,10 +473,8 @@ class Game implements GameOptions {
             if (previousSelection == undefined) {
                 // Get the START - where a card is coming from
                 let card = this.getCardFromSelection(selection);
-                card.selectionType = "start";
                 this.currentSelection = selection;
                 this.selectionOptions = this.calculateEndOptions(selection, false)
-                this.setSelectionTypeForOptions("end", this.selectionOptions)
                 // Ensure that the selection shows up in the animation
                 animationFrames.push({ movedCard: undefined, game: this.copy() })
             } else {
@@ -488,7 +483,7 @@ class Game implements GameOptions {
                 //Check if the card is the head of a stack
                 if (previousSelection.location == "column" && previousSelection.row < this.state.columns[previousSelection.column].length - 1) {
                     //Head of a row, calculate the movement required & perform the movement
-                    let moveCommands = stackMove(
+                    let moveCommands = metaStackMover.stackMove(
                         this.state.columns[previousSelection.column].slice(previousSelection.row), //cardStack
                         previousSelection, //origin
                         this.getOpenLocationSet(), //openLocationSet
@@ -522,9 +517,9 @@ class Game implements GameOptions {
                     this.state.depth += 1
                     // remove the card from current location
                     if (previousSelection.location == "freeCell") {
-                        this.state.freeCells[previousSelection.column] = { selectionType: "none", value: 0, suit: 0 }
+                        this.state.freeCells[previousSelection.column] = {value: 0, suit: 0 }
                     } else if (previousSelection.location == "column") {
-                        this.state.columns[previousSelection.column].pop()
+                        this.state.columns[previousSelection.column] = this.state.columns[previousSelection.column].slice(0, -1) //Need to copy
                     } else {
                         throw new Error("Unsupported selection location: " + selection.location)
                     }
@@ -532,8 +527,10 @@ class Game implements GameOptions {
                     if (selection.location == "freeCell") {
                         this.state.freeCells[selection.column] = card
                     } else if (selection.location == "column") {
+                        this.state.columns[selection.column] = [...this.state.columns[selection.column]] //Copy
                         this.state.columns[selection.column].push(card)
                     } else if (selection.location == "foundation") {
+                        this.state.foundations[selection.column] = [...this.state.foundations[selection.column]] //Copy
                         this.state.foundations[selection.column].push(card)
                     } else {
                         throw new Error("Unsupported selection location" + selection.location)
@@ -552,19 +549,6 @@ class Game implements GameOptions {
         return animationFrames
     }
 
-    setSelectionTypeForOptions(selectionType: SelectionType, options: Array<SelectionOption>) {
-        //Update the selection type for each card in the current state
-        for (let option of options) {
-            if (option.location === "freeCell") {
-                this.state.freeCells[option.column].selectionType = selectionType
-            } else if (option.location === "foundation") {
-                this.state.foundations[option.column][option.row].selectionType = selectionType
-            } else if (option.location === "column") {
-                this.state.columns[option.column][option.row].selectionType = selectionType;
-            }
-        }
-    }
-
     calculateStartOptions(): Array<AnimationFrame> {
         // Iterate through possible start options and see what can be selected
         //Setup a return for cards that were moved as part of the autofoundations flag
@@ -573,16 +557,15 @@ class Game implements GameOptions {
         let autoFoundationEnd: SelectionOption | undefined = undefined
         //freeCell
         let options: Array<SelectionOption> = []
-        for (let i = 0; i < this.numFreeCells; i++) {
+        for (let i = 0; i < settings.numFreeCells; i++) {
             let card = this.state.freeCells[i]
             if (card.value !== 0) {
                 let selection: SelectionOption = { location: "freeCell", column: i, row: 0 }
                 let endOptions = this.calculateEndOptions(selection, true)
                 if (endOptions.length > 0) {
                     options.push(selection)
-                    card.selectionType = "end"
                     // Auto move cards to the foundation if appropriate, and autoFoundations is true
-                    if (this.autoFoundations === true) {
+                    if (settings.autoFoundations === true) {
                         for (let option of endOptions) {
                             if (option.location === "foundation") {
                                 autoFoundationStart = selection
@@ -595,7 +578,7 @@ class Game implements GameOptions {
         }
         //columns
         //Iterate through each column
-        for (let i = 0; i < this.numColumns; i++) {
+        for (let i = 0; i < settings.numColumns; i++) {
             let lastIndex = this.state.columns[i].length - 1 //last index of the column
             let card = this.state.columns[i][lastIndex] //last card of the column
             //Stop looking if the card Value is zero
@@ -607,9 +590,8 @@ class Game implements GameOptions {
             if (endOptions.length > 0) {
                 let selection: SelectionOption = { location: "column", column: i, row: lastIndex }
                 options.push(selection)
-                card.selectionType = "end"
                 // Auto move cards to the foundation if appropriate
-                if (this.autoFoundations === true) {
+                if (settings.autoFoundations === true) {
                     for (let option of endOptions) {
                         if (option.location === "foundation") { //Only ever true once per option
                             autoFoundationStart = selection
@@ -633,7 +615,6 @@ class Game implements GameOptions {
                     )
                     if (stackHeadEndOptions.length > 0) {
                         options.push({ location: "column", column: i, row: cardIndex })
-                        checkCard.selectionType = "end"
                     }
                 } else {
                     stackCheckFlag = false //Did not match, end iteration
@@ -647,7 +628,7 @@ class Game implements GameOptions {
         this.selectionOptions = options
         let animationFrames: Array<AnimationFrame> = [{ movedCard: undefined, game: this.copy() }]
         // Perform autoFoundationOption - automatically moves cards to the foundation
-        if (this.autoFoundations === true && autoFoundationStart !== undefined && autoFoundationEnd !== undefined) {
+        if (settings.autoFoundations === true && autoFoundationStart !== undefined && autoFoundationEnd !== undefined) {
             animationFrames.push(...this.select(autoFoundationStart)) //select start -- should not return a card
             animationFrames.push(...this.select(autoFoundationEnd)) //select end -- should return a card
         }
@@ -678,7 +659,7 @@ class Game implements GameOptions {
         //Iterate through freeCells; stacks cannot be moved directly to freeCells
         // Only first open freeCell is avaliable
         if (selection.location != "freeCell" && !headOfStackFlag) {
-            for (let i = 0; i < this.numFreeCells; i++) {
+            for (let i = 0; i < settings.numFreeCells; i++) {
                 let freeCell = this.state.freeCells[i]
                 if (freeCell.value === 0) {
                     options.push({ location: "freeCell", column: i, row: 0 })
@@ -690,7 +671,7 @@ class Game implements GameOptions {
             }
         }
         // Iterate through columns
-        for (let i = 0; i < this.numColumns; i++) {
+        for (let i = 0; i < settings.numColumns; i++) {
             let lastIndex = this.state.columns[i].length - 1
             let columnCard = this.state.columns[i][lastIndex]
             //Check if card is moving column top to column top, don't do that
@@ -700,7 +681,7 @@ class Game implements GameOptions {
             if (isHigher(card, columnCard) || columnCard.value === 0) {
                 //See if / how the stack can be moved
                 if (headOfStackFlag) {
-                    let moveCommands = stackMove( //TODO,  make this faster by returning only the answer
+                    let canMoveStackFlag = metaStackMover.stackMoveFastCheck( //TODO,  make this faster by returning only the answer
                         this.state.columns[selection.column].slice(selection.row), //cardStack
                         selection, //origin
                         this.getOpenLocationSet(), //openLocationSet
@@ -709,7 +690,7 @@ class Game implements GameOptions {
                         0 //depth
                     )
                     //Move to next iteration if there is not a way to move to the location
-                    if (moveCommands.length === 0) {
+                    if (canMoveStackFlag === false) {
                         continue
                     }
                 }
@@ -727,7 +708,7 @@ class Game implements GameOptions {
     getOpenLocationSet(): LocationSet {
         //Return LocationSet of the freeCells and the columns that are currently open
         let openFreeCells: SelectionOption[] = []
-        for (let i = 0; i < this.numFreeCells; i++) {
+        for (let i = 0; i < settings.numFreeCells; i++) {
             let freeCell = this.state.freeCells[i]
             if (freeCell.value === 0) {
                 openFreeCells.push({ location: "freeCell", column: i, row: 0 })
@@ -735,7 +716,7 @@ class Game implements GameOptions {
         }
         let openColumns: SelectionOption[] = []
         // Iterate through columns
-        for (let i = 0; i < this.numColumns; i++) {
+        for (let i = 0; i < settings.numColumns; i++) {
             let lastIndex = this.state.columns[i].length - 1
             let columnCard = this.state.columns[i][lastIndex]
             if (columnCard.value === 0) {
@@ -820,7 +801,6 @@ class Game implements GameOptions {
                 let previousCard = this.getCardFromSelection({ location: "column", column: selection.column, row: selection.row - 1 })
                 if (isHigher(card, previousCard)) {
                     //not the head of the stack remove this selectionOption & remove graphics
-                    card.selectionType = "none"
                     this.selectionOptions.splice(i, 1)
                 }
             }
@@ -831,15 +811,15 @@ class Game implements GameOptions {
 class GameFromGame extends Game {
     constructor(parentGame: Game) {
         super(
-            { //options
-                numColumns: parentGame.numColumns,
-                numFreeCells: parentGame.numFreeCells,
-                autoFoundations: parentGame.autoFoundations,
-            },
-            JSON.parse(JSON.stringify(parentGame.state)), //state
-            JSON.parse(JSON.stringify(parentGame.selectionOptions)), //selectionOptions
+            {
+                freeCells: [...parentGame.state.freeCells],
+                foundations: [...parentGame.state.foundations],
+                columns: [...parentGame.state.columns],
+                depth: parentGame.state.depth
+            }, //state
+            [...parentGame.selectionOptions], //selectionOptions
             parentGame.currentSelection === undefined ?
-                undefined : JSON.parse(JSON.stringify(parentGame.currentSelection)) //currentSelection
+                undefined : parentGame.currentSelection //currentSelection
         )
     }
 }
@@ -849,11 +829,6 @@ class GameFromState extends Game {
         //Create a game from the state, use defualt options
         //MUST CALL calculateStartOptions if inital display of autofoundation is desired
         super(
-            { //options
-                numColumns: state.columns.length,
-                numFreeCells: state.freeCells.length,
-                autoFoundations: defaultGameOptions.autoFoundations,
-            },
             JSON.parse(JSON.stringify(state)), //state
             [], //selectionOptions
             undefined //currentSelection
@@ -874,20 +849,20 @@ class RandomGame extends GameFromState {
             depth: 0
         };
         //Add empty cards and empty cells; Freecells, foundations, columns
-        for (let i = 0; i < defaultGameOptions.numFreeCells; i++) {
-            state.freeCells.push({ value: 0, suit: 0, selectionType: "none" });
+        for (let i = 0; i < settings.numFreeCells; i++) {
+            state.freeCells.push({ value: 0, suit: 0});
         }
         for (let i = 0; i < 4; i++) {
-            state.foundations.push([{ value: 0, suit: i + 1, selectionType: "none" }])
+            state.foundations.push([{ value: 0, suit: i + 1}])
         }
-        for (let i = 0; i < defaultGameOptions.numColumns; i++) {
-            state.columns.push([{ value: 0, suit: 0, selectionType: "none" }]);
+        for (let i = 0; i < settings.numColumns; i++) {
+            state.columns.push([{ value: 0, suit: 0}]);
         }
         //Create a deck and shuffle it
         let deck: Array<Card> = [];
         for (let i = 1; i <= 13; i++) {
             for (let j = 1; j <= 4; j++) {
-                deck.push({ value: i, suit: j, selectionType: "none" });
+                deck.push({ value: i, suit: j});
             }
         }
         shuffleArray(deck);
@@ -896,7 +871,7 @@ class RandomGame extends GameFromState {
         for (let card of deck) {
             state.columns[col].push(card);
             col += 1;
-            if (col == defaultGameOptions.numColumns) {
+            if (col == settings.numColumns) {
                 col = 0;
             }
         }
@@ -912,7 +887,7 @@ class VisualManager {
     drawingInProgressFlag: boolean //true if activly drawing (discard call), if false initiate draw
     storageStateAllItems: LocalStorageState[]
     localStorageStateLocation = "stateItems"
-    storageStateMaxItems = 200
+    storageStateMaxItems = 600
     displayedGame: Game | undefined //Currently displayed game
 
     constructor(main: HTMLDivElement) {
@@ -1076,7 +1051,7 @@ class VisualManager {
         let topArea = getElementByClass(this.main, 'top-area');
         removeNodeChildren(topArea)
         // Free Cells
-        for (let i = 0; i < game.numFreeCells; i++) {
+        for (let i = 0; i < settings.numFreeCells; i++) {
             let freeCell = document.createElement("div");
             topArea.appendChild(freeCell);
             freeCell.classList.add("free-cell");
@@ -1086,10 +1061,11 @@ class VisualManager {
                 let animationFrames = game.select({ location: "freeCell", column: i, row: 0 });
                 this.drawGame(animationFrames);
             }
-            this.createCard(freeCell, card, "full", f);
+            this.createCard(freeCell, card, "full", f,
+                this.calcCardSelectionType(game, { location: "freeCell", column: i, row: 0 }));
         }
         // Foundations -- display even covered cards (for animation purposes)
-        for (let i = 0; i < game.numFreeCells; i++) {
+        for (let i = 0; i < settings.numFreeCells; i++) {
             let foundation = document.createElement("div");
             topArea.appendChild(foundation);
             foundation.classList.add("foundation");
@@ -1101,17 +1077,18 @@ class VisualManager {
                     let animationFrames = game.select({ location: "foundation", column: i, row: j });
                     this.drawGame(animationFrames);
                 }
-                this.createCard(foundation, card, "covered", f);
+                this.createCard(foundation, card, "covered", f,
+                    this.calcCardSelectionType(game, { location: "foundation", column: i, row: j }));
             }
         }
         // Columns
         let columnArea = getElementByClass(this.main, 'column-area');
         removeNodeChildren(columnArea);
-        for (let i = 0; i < game.numColumns; i++) {
+        for (let i = 0; i < settings.numColumns; i++) { //columns
             let column = document.createElement("div");
             columnArea.appendChild(column);
             column.classList.add("column");
-            for (let j = 0; j < game.state.columns[i].length; j++) {
+            for (let j = 0; j < game.state.columns[i].length; j++) { //rows of column
                 let card = game.state.columns[i][j];
                 let fullCard: CardDisplayStyle = (j == game.state.columns[i].length - 1) ? "full" : "partial";
                 let f = () => {
@@ -1119,7 +1096,8 @@ class VisualManager {
                     let animationFrames = game.select({ location: "column", column: i, row: j });
                     this.drawGame(animationFrames);
                 }
-                this.createCard(column, card, fullCard, f);
+                this.createCard(column, card, fullCard, f,
+                    this.calcCardSelectionType(game, { location: "column", column: i, row: j }));
             }
         }
         // Calculate new positions of the cards & deltas between old and new positions
@@ -1156,8 +1134,18 @@ class VisualManager {
 
     }
 
+    calcCardSelectionType(game: Game, selection: SelectionOption): SelectionType {
+        if (isSelectionEqual(game.currentSelection, selection)) {
+            return "start"
+        }
+        if (isAnySelectionEqual(selection, game.selectionOptions)) {
+            return "end"
+        }
+        return "none"
+    }
 
-    createCard(area: HTMLDivElement, cardObject: Card, cardDisplayStyle: CardDisplayStyle, onclick: Function = function () { }) { // eslint-disable-line
+    createCard(area: HTMLDivElement, cardObject: Card, cardDisplayStyle: CardDisplayStyle,
+        onclick: Function = function () { }, selectionType: SelectionType) { // eslint-disable-line
         // Unpack card information
         let value = cardObject.value;
         let suit = cardObject.suit;
@@ -1172,11 +1160,11 @@ class VisualManager {
         }
         card.style.display = "block"; //Unhide template
         // Do highlight
-        if (cardObject.selectionType == "start") {
+        if (selectionType == "start") {
             card.classList.add("card-start-highlight")
-        } else if (cardObject.selectionType == "end") {
+        } else if (selectionType == "end") {
             card.classList.add("card-end-highlight")
-        } else if (cardObject.selectionType == "debug") {
+        } else if (selectionType == "debug") {
             card.classList.add("card-debug-highlight")
         }
         // Update the value and the suit
@@ -1242,90 +1230,6 @@ class VisualManager {
     }
 }
 
-function bruteSolver(game: Game, scorecard: Scorecard,
-    lookup: Record<string, Scorecard>, winningScorecard: Scorecard): Scorecard {
-    //Returns a winningScoreCard if a better solution (or any solution is found)
-    //Otherwise returns false
-    //Use a branching algorythm with a lookup table to solve via a pretty brute force algorythm
-    //Planned inprovements:
-    // Stack moving improvement
-    // Single card in foundation storage rules (stop moving back and forth)
-    //
-    if (stopSolve) {
-        //Force stop solve without crashing the browser (hopefully)
-        return winningScorecard
-    }
-    //Check if the path to victory is too long and should truncate
-    if (winningScorecard.steps < infiniteSteps) {
-        // Minimum remaining steps is the number of cards in the columns
-        // Depending on settings may be +1 due to auto foundations, TODO
-        let minRemainingSteps = game.state.columns.reduce(
-            (partialSum, column) => partialSum + column.length - 1, 0)
-        if (scorecard.steps + minRemainingSteps >= winningScorecard.steps) {
-            //impossible to complete in fewer steps than the found winning state, break
-            // console.log("Perfect play from this scorecard requires too many steps")
-            return winningScorecard
-        }
-    }
-    //Check if the game is won
-    if (game.checkForWin()) {
-        // Add to the lookup as a win condition
-        console.log("FOUND WINNING SCORECARD", scorecard)
-        if (scorecard.steps < winningScorecard.steps) {
-            // Replace the winning scorecard
-            winningScorecard = scorecard
-        }
-        return winningScorecard
-    }
-    //Check if the game is lost
-    if (game.checkForLoss()) {
-        // console.log("Found losing scorecard", scorecard)
-        return winningScorecard
-    }
-    //Check if self is in the bruteSolver
-    let gameString = game.stringifyGameState()
-    if (gameString in lookup) {
-        // Test if this is a more efficient solution
-        if (scorecard.steps < lookup[gameString].steps) {
-            lookup[gameString] = scorecard
-            //More efficiant, continue looking
-        } else {
-            // Less efficient, stop looking
-            return winningScorecard
-        }
-    } else {
-        //Gamestring not encountered before
-        lookup[gameString] = scorecard
-    }
-    //Reduce number of move options by only allowing moves of full stacks
-    game.forceFullStackMove()
-    //Iterate through the next scorecard options
-    for (let intermediarySelectionOption of game.selectionOptions) {
-        //Select from location
-        let intermediaryGame = game.copy()
-        intermediaryGame.select(intermediarySelectionOption)
-        for (let selectionOption of intermediaryGame.selectionOptions) {
-            //Select too location
-            let newGame = intermediaryGame.copy()
-            newGame.select(selectionOption)
-            let newActionList = [...scorecard.actionList]
-            newActionList.push(selectionOption)
-            let newScorecard: Scorecard = {
-                state: game.state,
-                steps: scorecard.steps + 1,
-                actionList: newActionList
-            }
-            let returnScorecard = bruteSolver(newGame, newScorecard, lookup, winningScorecard)
-            // set winning scorecard
-            if (returnScorecard.steps < winningScorecard.steps) {
-                winningScorecard = returnScorecard
-            }
-        }
-    }
-    // Return overall winning or losing scorecard
-    return winningScorecard
-}
-
 /*
 // TEST STACK MOVE CODE
 let testStackMoveOptions1: TestStackMoveOptions = {
@@ -1345,24 +1249,6 @@ let testStackMoveOptions2: TestStackMoveOptions = {
 // testStackMove(testStackMoveOptions2)
 // console.log(nontrivialLookup)
 */
-
-let VM = new VisualManager(document.getElementById('main') as HTMLDivElement);
-
-function bruteSolverWrapper(game: Game) {
-    //Find and bind a stop button - which stops the calculation
-    let clearButton = document.getElementById("stop") as HTMLDivElement
-    clearButton.onclick = () => {
-        console.log("SETTING STOP SOLVE")
-        stopSolve = true
-    }
-    let startingScorecard: Scorecard = { state: game.state, steps: 0, actionList: [] }
-    let winningScorecard: Scorecard = { state: game.state, steps: infiniteSteps, actionList: [] }
-    let lookup: Record<string, Scorecard> = {}
-    let resultScorecard = bruteSolver(game, startingScorecard, lookup, winningScorecard)
-    console.log("RESULT")
-    console.log(resultScorecard)
-}
-
 
 interface SolverItem {
     game: Game
@@ -1443,7 +1329,7 @@ class Solver {
                                 return item.selection
                             }
                         })
-                        console.log("FOUND WINNING SCORECARD, steps: ", this.winningSteps, this.winningPath)
+                        console.log("Found winning solution, steps: ", this.winningSteps)
                     }
                 } else {
                     //Losing game
@@ -1490,30 +1376,72 @@ class Solver {
 // }
 
 
-if (VM.displayedGame === undefined) {
-    throw Error("VM needs to be defined.")
-}
+let VM = new VisualManager(document.getElementById('main') as HTMLDivElement);
+let metaStackMover = new StackMover()
+
+if (VM.displayedGame === undefined) { throw Error("VM needs to be defined.") }
+
 let solver = new Solver(new GameFromGame(VM.displayedGame))
 
 let playButton = document.getElementById("play") as HTMLDivElement
 
 let wrapper = () => {
-    for (let i = 0; i < 1000000; i++) {
+    for (let i = 0; i < 3000; i++) {
         if (solver.stack.length > 0) {
             solver.processItem()
         }
     }
     let lastItem = solver.stack[solver.stack.length - 1]
+    let solverStatus = document.getElementById("solver-status") as HTMLDivElement
     if (lastItem === undefined) {
-        console.log("Second solution:", solver.winningSteps, solver.winningPath)
-        return
+        console.log("SOLUTION:", solver.winningSteps, solver.winningPath)
+        if (solver.winningSteps === infiniteSteps) {
+            //Losing
+            solverStatus.innerText = "No solutions found."
+        } else {
+            //Winning solution
+            solverStatus.innerText = `Solution found in ${solver.winningSteps} steps.`
+            //Bind buttons to the solution
+            //Progress two clicks
+            let nextStep = document.getElementById("next-solver") as HTMLDivElement
+            let currentStepIndex = 0
+            nextStep.onclick = () => {
+                // onclick function for the card
+                if (VM.displayedGame === undefined) { throw Error("VM needs to be defined.") }
+                let animationFrames = VM.displayedGame.select(solver.winningPath[currentStepIndex]);
+                animationFrames.push(...VM.displayedGame.select(solver.winningPath[currentStepIndex + 1]))
+                VM.drawGame(animationFrames);
+                currentStepIndex += 2
+            }
+            //Progress all the clicks
+            let runAllSteps = document.getElementById("all-solver") as HTMLDivElement
+            runAllSteps.onclick = () => {
+                if (VM.displayedGame === undefined) { throw Error("VM needs to be defined.") }
+                let animationFrames = []
+                for (let step of solver.winningPath) {
+                    animationFrames.push(...VM.displayedGame.select(step))
+                }
+                VM.drawGame(animationFrames)
+            }
+            return
+        }
+    } else {
+        // Probably not solved, update the status bar
+        if (solver.winningSteps === infiniteSteps) {
+            solverStatus.innerText = "Solver running..."
+        } else {
+            solverStatus.innerText = `Running... Found ${solver.winningSteps} step solution.`
+        }
     }
-    VM.easyDrawGame(lastItem.game)
-    // setTimeout(wrapper, 0)
+    // VM.easyDrawGame(lastItem.game)
+    setTimeout(wrapper, 0)
 }
 
 playButton.onclick = () => {
     console.log("RUNNING 2nd SOLVER")
+    metaStackMover = new StackMover() //Reset the stack mover
+    if (VM.displayedGame === undefined) { throw Error("VM needs to be defined.") }
+    solver = new Solver(new GameFromGame(VM.displayedGame)) //reset solver
     wrapper()
 }
 
@@ -1534,6 +1462,3 @@ interface TreeRequirements {
 }
 
 let L: Record<string, TreeRequirements>
-
-
-
