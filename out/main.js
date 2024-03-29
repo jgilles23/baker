@@ -1,13 +1,4 @@
 "use strict";
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-};
 //Control variable definitons
 let infiniteSteps = 10 ** 6; //Define a depth for infinity for comparisons, big number
 let foceFullStackMoveVisual = false; //If true, visualManager will force only full stack moves
@@ -15,7 +6,6 @@ let stopSolve = false; //When true, stops the bruteSolver from running
 let defaultGameOptions = {
     numColumns: 8, //Number of stack columns
     numFreeCells: 4, //Number of freeCells
-    hardColumns: false, //NOT USED, but would only allow Kings on open columns
     autoFoundations: true, //Automatically move cards to the foundation spaces
 };
 // const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -305,7 +295,6 @@ class Game {
         //Unpack options
         this.numColumns = options.numColumns;
         this.numFreeCells = options.numFreeCells;
-        this.hardColumns = options.hardColumns;
         this.autoFoundations = options.autoFoundations;
         //Assign state
         this.state = state;
@@ -413,6 +402,8 @@ class Game {
                 }
                 else {
                     //Not the head of a row, do a normal movement
+                    // Add a movement step to the state
+                    this.state.depth += 1;
                     // remove the card from current location
                     if (previousSelection.location == "freeCell") {
                         this.state.freeCells[previousSelection.column] = { selectionType: "none", value: 0, suit: 0 };
@@ -571,7 +562,8 @@ class Game {
                 }
             }
         }
-        // Iterate through freeCells; stacks cannot be moved directly to freeCells
+        //Iterate through freeCells; stacks cannot be moved directly to freeCells
+        // Only first open freeCell is avaliable
         if (selection.location != "freeCell" && !headOfStackFlag) {
             for (let i = 0; i < this.numFreeCells; i++) {
                 let freeCell = this.state.freeCells[i];
@@ -580,6 +572,7 @@ class Game {
                     if (truncateSearch) {
                         return options;
                     }
+                    break; //Successfully found freeCell, finish search
                 }
             }
         }
@@ -587,6 +580,10 @@ class Game {
         for (let i = 0; i < this.numColumns; i++) {
             let lastIndex = this.state.columns[i].length - 1;
             let columnCard = this.state.columns[i][lastIndex];
+            //Check if card is moving column top to column top, don't do that
+            if (selection.location == "column" && selection.row === 1 && columnCard.value === 0) {
+                continue;
+            }
             if (isHigher(card, columnCard) || columnCard.value === 0) {
                 //See if / how the stack can be moved
                 if (headOfStackFlag) {
@@ -701,7 +698,6 @@ class GameFromGame extends Game {
         super({
             numColumns: parentGame.numColumns,
             numFreeCells: parentGame.numFreeCells,
-            hardColumns: parentGame.hardColumns,
             autoFoundations: parentGame.autoFoundations,
         }, JSON.parse(JSON.stringify(parentGame.state)), //state
         JSON.parse(JSON.stringify(parentGame.selectionOptions)), //selectionOptions
@@ -717,7 +713,6 @@ class GameFromState extends Game {
         super({
             numColumns: state.columns.length,
             numFreeCells: state.freeCells.length,
-            hardColumns: defaultGameOptions.hardColumns,
             autoFoundations: defaultGameOptions.autoFoundations,
         }, JSON.parse(JSON.stringify(state)), //state
         [], //selectionOptions
@@ -735,6 +730,7 @@ class RandomGame extends GameFromState {
             freeCells: [],
             foundations: [],
             columns: [],
+            depth: 0
         };
         //Add empty cards and empty cells; Freecells, foundations, columns
         for (let i = 0; i < defaultGameOptions.numFreeCells; i++) {
@@ -918,6 +914,9 @@ class VisualManager {
             //Get previous positions of the cards
             fromCardPositionRect = getCardClientRect(card, this.main);
         }
+        //Display the number of steps encountered
+        let stepsTakenDiv = document.getElementById("steps-taken");
+        stepsTakenDiv.textContent = game.state.depth.toString();
         //Create and draw the top area
         let topArea = getElementByClass(this.main, 'top-area');
         removeNodeChildren(topArea);
@@ -1199,26 +1198,153 @@ let testStackMoveOptions2: TestStackMoveOptions = {
 */
 let VM = new VisualManager(document.getElementById('main'));
 function bruteSolverWrapper(game) {
-    return __awaiter(this, void 0, void 0, function* () {
-        //Find and bind a stop button - which stops the calculation
-        let clearButton = document.getElementById("stop");
-        clearButton.onclick = () => {
-            console.log("SETTING STOP SOLVE");
-            stopSolve = true;
-        };
-        let startingScorecard = { state: game.state, steps: 0, actionList: [] };
-        let winningScorecard = { state: game.state, steps: infiniteSteps, actionList: [] };
-        let lookup = {};
-        let resultScorecard = bruteSolver(game, startingScorecard, lookup, winningScorecard);
-        console.log("RESULT");
-        console.log(resultScorecard);
-    });
+    //Find and bind a stop button - which stops the calculation
+    let clearButton = document.getElementById("stop");
+    clearButton.onclick = () => {
+        console.log("SETTING STOP SOLVE");
+        stopSolve = true;
+    };
+    let startingScorecard = { state: game.state, steps: 0, actionList: [] };
+    let winningScorecard = { state: game.state, steps: infiniteSteps, actionList: [] };
+    let lookup = {};
+    let resultScorecard = bruteSolver(game, startingScorecard, lookup, winningScorecard);
+    console.log("RESULT");
+    console.log(resultScorecard);
+}
+class Solver {
+    constructor(game) {
+        //Class to use as a solver for a particular game
+        // Sovles the game, but uses timeouts to ensure that we don't interfere with javascript execution
+        // Uses a stack to store the next item that needs to be calculated and calculates a certian number of
+        // iterations at a time, instead of waiting for full resolution
+        this.lookup = {};
+        this.winningSteps = infiniteSteps;
+        this.winningPath = [];
+        game.forceFullStackMove();
+        this.startingGame = game;
+        this.stack = [{
+                game: game,
+                remainingOptions: JSON.parse(JSON.stringify(game.selectionOptions)),
+                selection: undefined
+            }];
+    }
+    processItem() {
+        //Look at the last item on the stack and process for a win or not
+        let stackItem = this.stack[this.stack.length - 1];
+        if (stackItem === undefined) {
+            throw Error("Solve process item called when there are not items on the stack.");
+        }
+        //Check if there are more options to operate on
+        if (stackItem.remainingOptions.length == 0) {
+            this.stack.pop(); //Processing complete for this item
+            return;
+        }
+        //Operation on the next game and the next Option in the stack
+        let newGame = new GameFromGame(stackItem.game);
+        stackItem.selection = stackItem.remainingOptions.shift();
+        newGame.select(stackItem.selection);
+        let newGameString = newGame.stringifyGameState();
+        //Check if this was choosing the START CARD -- we only want to look at things after choosing the end card
+        // otherwise the state is exactly the same from a stateString perspective
+        if (newGame.currentSelection === undefined) {
+            //Check if we have encountered this state before
+            if (this.lookup[newGameString] !== undefined) {
+                //Test if this is a more efficient solution
+                if (newGame.state.depth < this.lookup[newGameString]) {
+                    //More efficient soluton found
+                    this.lookup[newGameString] = newGame.state.depth;
+                }
+                else {
+                    //A more efficient game exists, stop looking
+                    // console.log("Already in lookup")
+                    return;
+                }
+            }
+            else {
+                //Not encountered before, add to the lookup
+                this.lookup[newGameString] = newGame.state.depth;
+            }
+            //Check if winning or losing scorecard
+            if (newGame.selectionOptions.length === 0) {
+                //Option has never been selected and no Options in the stack
+                if (newGame.checkForWin()) {
+                    //Winning game, check for replacement
+                    if (newGame.state.depth < this.winningSteps) {
+                        //Found a better WINNING solution
+                        this.winningSteps = newGame.state.depth;
+                        this.winningPath = this.stack.map((item) => {
+                            if (item.selection === undefined) {
+                                throw Error("Not expecting undefined selection");
+                            }
+                            else {
+                                return item.selection;
+                            }
+                        });
+                        console.log("FOUND WINNING SCORECARD, steps: ", this.winningSteps, this.winningPath);
+                    }
+                }
+                else {
+                    //Losing game
+                    // console.log("Found losing game.")
+                }
+                return;
+            }
+            //Check if path to vistory is too long and should stop searching here
+            if (this.winningSteps < infiniteSteps) {
+                // Minimum remaining steps is the number of cards in the columns
+                // Depending on settings may be +1 due to auto foundations, TODO
+                let minRemainingSteps = newGame.state.columns.reduce((partialSum, column) => partialSum + column.length - 1, 0);
+                if (newGame.state.depth + minRemainingSteps >= this.winningSteps) {
+                    //impossible to complete in fewer steps than the found winning state, break
+                    // console.log("Perfect play from this scorecard requires too many steps")
+                    return;
+                }
+            }
+        }
+        //This newGame needs to be investigated further
+        //Restrict to fullStackMoves only
+        newGame.forceFullStackMove();
+        this.stack.push({
+            game: newGame,
+            remainingOptions: JSON.parse(JSON.stringify(newGame.selectionOptions)),
+            selection: undefined
+        });
+    }
+    solveInline() {
+        while (this.stack.length > 0) {
+            this.processItem();
+        }
+    }
 }
 // RUN SOLUTION SEARCH
 // window.onload = () => {
-//     console.log("RUNNING SOLVER")
 //     if (VM.displayedGame !== undefined) { // eslint-disable-line
+//         console.log("RUNNING 1st SOLVER")
 //         bruteSolverWrapper(new GameFromGame(VM.displayedGame))
 //     }
 // }
+if (VM.displayedGame === undefined) {
+    throw Error("VM needs to be defined.");
+}
+let solver = new Solver(new GameFromGame(VM.displayedGame));
+let playButton = document.getElementById("play");
+let wrapper = () => {
+    for (let i = 0; i < 1000000; i++) {
+        if (solver.stack.length > 0) {
+            solver.processItem();
+        }
+    }
+    let lastItem = solver.stack[solver.stack.length - 1];
+    if (lastItem === undefined) {
+        console.log("Second solution:", solver.winningSteps, solver.winningPath);
+        return;
+    }
+    VM.easyDrawGame(lastItem.game);
+    // setTimeout(wrapper, 0)
+};
+playButton.onclick = () => {
+    console.log("RUNNING 2nd SOLVER");
+    wrapper();
+};
+let L;
 //# sourceMappingURL=main.js.map
