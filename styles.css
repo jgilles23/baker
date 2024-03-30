@@ -2,7 +2,6 @@
     /* Control variables modified by Javascript*/
     /* Other golbal settings and control variables */
     --card-slide-animation-duration: 0.2s;
-    --main-width: 95vw;
     font-family: 'Arial';
     padding: 0;
     margin: 0;
@@ -20,7 +19,7 @@
 }
 
 .main {
-    width: calc(min(70em, 90vw));
+    width: calc(min(60em, 90vw));
     margin: auto;
     container-type: inline-size;
 }
@@ -32,13 +31,21 @@
 
 #solver-bar {
     background-color: lightgray;
-    justify-content: center;
+    justify-content:space-between;
     font-weight: bold;
+    flex-wrap: wrap;
+    /* padding: 5cqw; */
+    font-size: 0.8em;
 }
 
-#solver-bar>* {
-    margin-left: 5cqw;
-    margin-right: 5cqw;
+#solver-bar>div {
+    display: flex;
+}
+
+#solver-bar>div>* {
+    margin-left: 1cqw;
+    margin-right: 1cqw;
+    align-self: center;
 }
 
 #title-bar {
@@ -67,25 +74,25 @@
 }
 
 .column {
-    margin: 0.25vw;
-    padding: 0.5vw;
+    margin: 0cqw;
+    padding: 0.4cqw;
     flex-grow: 1;
     /* flex-basis: 0; */
     width: 0;
 }
 
 .free-cell {
-    margin: 0.25vw;
-    padding: 0.5vw;
+    margin: 0cqw;
+    padding: 0.4cqw;
     /* border-radius: 1vw; */
-    background-color: lightgray;
+    background-color: grey;
     flex-grow: 1;
     width: 0;
 }
 
 .foundation {
-    margin: 0.25vw;
-    padding: 0.5vw;
+    margin: 0cqw;
+    padding: 0.4cqw;
     background-color: lightblue;
     flex-grow: 1;
     width: 0;
@@ -94,7 +101,7 @@
 /* PLAYING CARD STANDARDS */
 
 .playing-card-layout-box {
-    font-size: calc(min(1.5em, 3vw));
+    font-size: calc(min(2em, 4cqw));
     position: relative;
     /* border: 1px solid red; */
 }
@@ -117,9 +124,9 @@
     border-width: 1px;
     border-color: black;
     border-width: 2px;
-    border-radius: 0.7em;
+    border-radius: 2cqw;
     /* width: 10vw; */
-    height: 4em;
+    height: 14cqw;
     flex-direction: column;
     padding: 0.2em;
     background-color: white;
@@ -136,7 +143,6 @@
 
 .playing-card-label-bottom {
     align-self: flex-end;
-
 }
 
 .playing-card-value {
