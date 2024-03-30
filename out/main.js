@@ -2,11 +2,11 @@
 //Control variable definitons
 let infiniteSteps = 10 ** 6; //Define a depth for infinity for comparisons, big number
 let foceFullStackMoveVisual = false; //If true, visualManager will force only full stack moves
-let stopSolve = false; //When true, stops the bruteSolver from running
 let settings = {
     numColumns: 8, //Number of stack columns
     numFreeCells: 4, //Number of freeCells
     autoFoundations: true, //Automatically move cards to the foundation spaces
+    fourColorMode: true, //Make cards easier to see by assigning 4 colors
 };
 // const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function getElementByClass(parentDiv, className) {
@@ -783,6 +783,12 @@ class VisualManager {
         clearButton.onclick = () => {
             this.localStorageClear();
         };
+        //Find and bind the four color mode option
+        let paintButton = document.getElementById("paintbrush");
+        paintButton.onclick = () => {
+            settings.fourColorMode = !settings.fourColorMode;
+            this.drawGame([]);
+        };
     }
     newRandomGame() {
         let game = new RandomGame();
@@ -868,6 +874,12 @@ class VisualManager {
         }
     }
     drawGame(animationFrames) {
+        if (animationFrames.length === 0) {
+            if (this.displayedGame === undefined) {
+                return;
+            }
+            animationFrames = [{ movedCard: undefined, game: this.displayedGame }];
+        }
         //Process the animationFrames, leaving the last animation frame game as the display in the end
         this.animationFrames = animationFrames;
         let finalGameAfterAnimation = animationFrames[animationFrames.length - 1].game;
@@ -914,7 +926,7 @@ class VisualManager {
                 let animationFrames = game.select({ location: "freeCell", column: i, row: 0 });
                 this.drawGame(animationFrames);
             };
-            this.createCard(freeCell, card, "full", f, this.calcCardSelectionType(game, { location: "freeCell", column: i, row: 0 }));
+            this.createCard(freeCell, card, "full", f, this.calcCardSelectionType(game, { location: "freeCell", column: i, row: 0 }), "freeCell");
         }
         // Foundations -- display even covered cards (for animation purposes)
         for (let i = 0; i < settings.numFreeCells; i++) {
@@ -929,7 +941,7 @@ class VisualManager {
                     let animationFrames = game.select({ location: "foundation", column: i, row: j });
                     this.drawGame(animationFrames);
                 };
-                this.createCard(foundation, card, "covered", f, this.calcCardSelectionType(game, { location: "foundation", column: i, row: j }));
+                this.createCard(foundation, card, "covered", f, this.calcCardSelectionType(game, { location: "foundation", column: i, row: j }), "foundation");
             }
         }
         // Columns
@@ -947,7 +959,13 @@ class VisualManager {
                     let animationFrames = game.select({ location: "column", column: i, row: j });
                     this.drawGame(animationFrames);
                 };
-                this.createCard(column, card, fullCard, f, this.calcCardSelectionType(game, { location: "column", column: i, row: j }));
+                let type = this.calcCardSelectionType(game, { location: "column", column: i, row: j });
+                if (game.state.columns[i].length === 1 && j === 0) {
+                    this.createCard(column, card, fullCard, f, type, "column");
+                }
+                else if (j > 0) {
+                    this.createCard(column, card, fullCard, f, type, "column");
+                }
             }
         }
         // Calculate new positions of the cards & deltas between old and new positions
@@ -991,7 +1009,7 @@ class VisualManager {
         }
         return "none";
     }
-    createCard(area, cardObject, cardDisplayStyle, onclick = function () { }, selectionType) {
+    createCard(area, cardObject, cardDisplayStyle, onclick = function () { }, selectionType, selectionLocation) {
         // Unpack card information
         let value = cardObject.value;
         let suit = cardObject.suit;
@@ -1018,7 +1036,10 @@ class VisualManager {
         }
         // Update the value and the suit
         let valueString;
-        if (value == 1) {
+        if (value == 0 && selectionLocation !== "foundation") {
+            valueString = "";
+        }
+        else if (value == 1) {
             valueString = "A";
         }
         else if (value <= 10) {
@@ -1043,8 +1064,8 @@ class VisualManager {
         let suitString;
         let suitColor;
         if (suit == 0) {
-            suitString = "■";
-            suitColor = "green";
+            suitString = ""; //"■";
+            suitColor = "white";
         }
         else if (suit == 1) {
             suitString = "♠";
@@ -1052,11 +1073,21 @@ class VisualManager {
         }
         else if (suit == 2) {
             suitString = "♦";
-            suitColor = "red";
+            if (settings.fourColorMode) {
+                suitColor = "blue";
+            }
+            else {
+                suitColor = "red";
+            }
         }
         else if (suit == 3) {
             suitString = "♣";
-            suitColor = "black";
+            if (settings.fourColorMode) {
+                suitColor = "purple";
+            }
+            else {
+                suitColor = "black";
+            }
         }
         else if (suit == 4) {
             suitString = "♥";
@@ -1198,8 +1229,8 @@ class Solver {
 //         bruteSolverWrapper(new GameFromGame(VM.displayedGame))
 //     }
 // }
-let VM = new VisualManager(document.getElementById('main'));
 let metaStackMover = new StackMover();
+let VM = new VisualManager(document.getElementById('main'));
 if (VM.displayedGame === undefined) {
     throw Error("VM needs to be defined.");
 }
@@ -1272,5 +1303,4 @@ playButton.onclick = () => {
     solver = new Solver(new GameFromGame(VM.displayedGame)); //reset solver
     wrapper();
 };
-let L;
 //# sourceMappingURL=main.js.map
