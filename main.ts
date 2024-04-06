@@ -10,16 +10,15 @@ let settings = {
 
 type SelectionType = "none" | "start" | "end" | "debug" //TODO - remove debug
 
-interface Card {
-    value: number; //0 for placeholder, otherwise 1 for Ace to 13 for King
-    suit: number; //0 for placeholder, otherwise 1: spades, 2: diamonds, 3: clubs, 4: hearts
-}
+type Card = number //1st digit is suit, 2nd/3rd digit is value
+//First Digit: 0 no suit, 1 spades, 2 diamonds, 3 clubs, 4 hearts
+//Second/Third Digit: 0 no value, 1 Ace, 2, 3, ..., 10, 11 Jack, 12 Queen, 13 King
 
 interface GameState {
-    freeCells: Array<Card>;
-    foundations: Array<Array<Card>>;
-    columns: Array<Array<Card>>;
-    depth: number
+    freeCells: Array<Card>; //0 for empty freeCells
+    foundations: Array<Card>; //X00 for empty foundation of suit X
+    columns: Array<Array<Card>>; //[0] for empty column, column always contains at least card "0"
+    depth: number //number of card moves to get to this state
 }
 
 type SelectionLocation = "column" | "freeCell" | "foundation"
@@ -79,12 +78,14 @@ function removeNodeChildren(node: HTMLDivElement) {
 }
 
 function isHigher(startCard: Card, endCard: Card): boolean {
+    // TODO --- remove isHigher and isLower function calls entirely, they only return a compare anyway
     // Tests if the end card is one higher in value and the same suit as the start card
-    return (startCard.suit === endCard.suit) && (startCard.value + 1 === endCard.value)
+    return (endCard - startCard) === 1
 }
 
 function isLower(startCard: Card, endCard: Card): boolean {
-    return (startCard.suit === endCard.suit) && (startCard.value - 1 === endCard.value)
+    // Tests if the end card is one lower and the smae suit as the start card
+    return (endCard - startCard) === -1
 }
 
 function isSelectionEqual(selection0: SelectionOption | undefined, selection1: SelectionOption | undefined): boolean {
@@ -105,7 +106,7 @@ function isAnySelectionEqual(selection: SelectionOption, options: Array<Selectio
 }
 
 function stringifyCard(card: Card): string {
-    return "0A23456789TJQKabcdefgh"[card.value] + "zsdch"[card.suit]
+    return "0A23456789TJQKabcdefgh"[card % 100] + "zsdch"[(card / 100) | 0]
 }
 
 function getCardDivNode(card: Card, parentDiv: HTMLDivElement): HTMLDivElement | null {
@@ -121,6 +122,10 @@ function getCardClientRect(card: Card, parentDiv: HTMLDivElement): DOMRect | und
     } else {
         return undefined
     }
+}
+
+function getSuit(card: Card) {
+    return (card / 100) | 0
 }
 
 type ColumnLetter = SelectionOption | "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H"
@@ -443,7 +448,7 @@ class Game {
             return this.state.freeCells[selection.column]
         } else if (selection.location === "foundation") {
             // foundation selection
-            return this.state.foundations[selection.column][selection.row]
+            return this.state.foundations[selection.column]
         } else if (selection.location == "column") {
             // column selection
             return this.state.columns[selection.column][selection.row]
@@ -519,7 +524,7 @@ class Game {
                     this.state.depth += 1
                     // remove the card from current location
                     if (previousSelection.location == "freeCell") {
-                        this.state.freeCells[previousSelection.column] = { value: 0, suit: 0 }
+                        this.state.freeCells[previousSelection.column] = 0
                     } else if (previousSelection.location == "column") {
                         this.state.columns[previousSelection.column] = this.state.columns[previousSelection.column].slice(0, -1) //Need to copy
                     } else {
@@ -532,8 +537,7 @@ class Game {
                         this.state.columns[selection.column] = [...this.state.columns[selection.column]] //Copy
                         this.state.columns[selection.column].push(card)
                     } else if (selection.location == "foundation") {
-                        this.state.foundations[selection.column] = [...this.state.foundations[selection.column]] //Copy
-                        this.state.foundations[selection.column].push(card)
+                        this.state.foundations[selection.column] = card
                     } else {
                         throw new Error("Unsupported selection location" + selection.location)
                     }
@@ -561,7 +565,7 @@ class Game {
         let options: Array<SelectionOption> = []
         for (let i = 0; i < settings.numFreeCells; i++) {
             let card = this.state.freeCells[i]
-            if (card.value !== 0) {
+            if (card !== 0) {
                 let selection: SelectionOption = { location: "freeCell", column: i, row: 0 }
                 let endOptions = this.calculateEndOptions(selection, true)
                 if (endOptions.length > 0) {
@@ -584,7 +588,7 @@ class Game {
             let lastIndex = this.state.columns[i].length - 1 //last index of the column
             let card = this.state.columns[i][lastIndex] //last card of the column
             //Stop looking if the card Value is zero
-            if (card.value == 0) {
+            if (card == 0) {
                 continue
             }
             //Calcualte options for the bottom card of the column
@@ -648,10 +652,9 @@ class Game {
         // Iterate through foundations
         if (!headOfStackFlag) { //Stacks cannot be moved directly to foundations
             for (let i = 0; i < 4; i++) {
-                let lastIndex = this.state.foundations[i].length - 1
-                let foundationCard = this.state.foundations[i][lastIndex]
+                let foundationCard = this.state.foundations[i]
                 if (isLower(card, foundationCard)) {
-                    options.push({ location: "foundation", column: i, row: lastIndex })
+                    options.push({ location: "foundation", column: i, row: 0 })
                     if (truncateSearch && !headOfStackFlag) {
                         return options
                     }
@@ -663,7 +666,7 @@ class Game {
         if (selection.location != "freeCell" && !headOfStackFlag) {
             for (let i = 0; i < settings.numFreeCells; i++) {
                 let freeCell = this.state.freeCells[i]
-                if (freeCell.value === 0) {
+                if (freeCell === 0) {
                     options.push({ location: "freeCell", column: i, row: 0 })
                     if (truncateSearch) {
                         return options
@@ -677,10 +680,10 @@ class Game {
             let lastIndex = this.state.columns[i].length - 1
             let columnCard = this.state.columns[i][lastIndex]
             //Check if card is moving column top to column top, don't do that
-            if (selection.location == "column" && selection.row === 1 && columnCard.value === 0) {
+            if (selection.location == "column" && selection.row === 1 && columnCard === 0) {
                 continue
             }
-            if (isHigher(card, columnCard) || columnCard.value === 0) {
+            if (isHigher(card, columnCard) || columnCard === 0) {
                 //See if / how the stack can be moved
                 if (headOfStackFlag) {
                     let canMoveStackFlag = metaStackMover.stackMoveFastCheck( //TODO,  make this faster by returning only the answer
@@ -712,7 +715,7 @@ class Game {
         let openFreeCells: SelectionOption[] = []
         for (let i = 0; i < settings.numFreeCells; i++) {
             let freeCell = this.state.freeCells[i]
-            if (freeCell.value === 0) {
+            if (freeCell === 0) {
                 openFreeCells.push({ location: "freeCell", column: i, row: 0 })
             }
         }
@@ -721,7 +724,7 @@ class Game {
         for (let i = 0; i < settings.numColumns; i++) {
             let lastIndex = this.state.columns[i].length - 1
             let columnCard = this.state.columns[i][lastIndex]
-            if (columnCard.value === 0) {
+            if (columnCard === 0) {
                 openColumns.push({ location: "column", column: i, row: 0 })
             }
         }
@@ -732,29 +735,19 @@ class Game {
     stringifyGameState(): string {
         let stringGameState: string =
 
-            [...this.state.freeCells].sort(
-                (a: Card, b: Card): number => {
-                    //-1 left item should be before right, 0 sort equally, 1 sorted after
-                    // Sort by value then suit 
-                    let aNumber = a.value * 1000 + a.suit
-                    let bNumber = b.value * 1000 + b.suit
-                    return bNumber - aNumber //high to low sort
-                }
-            ).map(
+            [...this.state.freeCells].sort().map(
                 (card: Card) => stringifyCard(card)
             ).join("") +
             " | " +
             [...this.state.foundations].map(
-                (column) => column.map(
-                    (card: Card) => stringifyCard(card)
-                ).join("")
+                (card: Card) => stringifyCard(card)
             ).join(",") +
             " | " +
             [...this.state.columns].sort(
                 // Sort by the top card in the stack   
                 (a: Array<Card>, b: Array<Card>): number => {
-                    let aNumber = a[a.length - 1].value * 1000 + a[a.length - 1].suit
-                    let bNumber = b[b.length - 1].value * 1000 + b[b.length - 1].suit
+                    let aNumber = a[a.length - 1]
+                    let bNumber = b[b.length - 1]
                     return bNumber - aNumber //high to low sort
                 }
             ).map(
@@ -772,7 +765,7 @@ class Game {
     checkForWin(): boolean {
         //Check if the current position of the game is winning, by checking if no cards remain to be placed in the foundation
         for (let freeCell of this.state.freeCells) {
-            if (freeCell.value !== 0) {
+            if (freeCell !== 0) {
                 return false
             }
         }
@@ -852,19 +845,19 @@ class RandomGame extends GameFromState {
         };
         //Add empty cards and empty cells; Freecells, foundations, columns
         for (let i = 0; i < settings.numFreeCells; i++) {
-            state.freeCells.push({ value: 0, suit: 0 });
+            state.freeCells.push(0);
         }
-        for (let i = 0; i < 4; i++) {
-            state.foundations.push([{ value: 0, suit: i + 1 }])
+        for (let i = 1; i <= 4; i++) {
+            state.foundations.push(i * 100)
         }
         for (let i = 0; i < settings.numColumns; i++) {
-            state.columns.push([{ value: 0, suit: 0 }]);
+            state.columns.push([0]);
         }
         //Create a deck and shuffle it
         let deck: Array<Card> = [];
         for (let i = 1; i <= 13; i++) {
             for (let j = 1; j <= 4; j++) {
-                deck.push({ value: i, suit: j });
+                deck.push(100 * j + i);
             }
         }
         shuffleArray(deck);
@@ -928,16 +921,26 @@ class VisualManager {
         }
         //Find and bind the four color mode option
         let paintButton = document.getElementById("paintbrush") as HTMLDivElement
-        paintButton.onclick  = () => {
+        paintButton.onclick = () => {
             settings.fourColorMode = !settings.fourColorMode
             this.drawGame([])
+        }
+        // Find and bind the unpacker
+        let unpackerButton = document.getElementById("unpack") as HTMLDivElement
+        unpackerButton.onclick = () => {
+            if (this.displayedGame === undefined) {
+                return
+            }
+            let unpacker = new UnpackerFromState(this.displayedGame.state)
+            console.log(unpacker)
+            unpacker.step()
         }
     }
 
     newRandomGame() {
         let game = new RandomGame()
         let animationFrames = game.calculateStartOptions()
-        this.storageSave(game, "new") //Save as new type
+        this.storageSave(game, "new") //Save as new type whats on
         this.drawGame(animationFrames);
     }
 
@@ -1026,7 +1029,7 @@ class VisualManager {
             if (this.displayedGame === undefined) {
                 return
             }
-            animationFrames = [{movedCard:undefined, game:this.displayedGame}]
+            animationFrames = [{ movedCard: undefined, game: this.displayedGame }]
         }
         //Process the animationFrames, leaving the last animation frame game as the display in the end
         this.animationFrames = animationFrames
@@ -1078,14 +1081,16 @@ class VisualManager {
             this.createCard(freeCell, card, "full", f,
                 this.calcCardSelectionType(game, { location: "freeCell", column: i, row: 0 }), "freeCell");
         }
-        // Foundations -- display even covered cards (for animation purposes)
+        // Foundations -- display one covered cards (for animation purposes)
         for (let i = 0; i < settings.numFreeCells; i++) {
             let foundation = document.createElement("div");
             topArea.appendChild(foundation);
             foundation.classList.add("foundation");
-            let lastCardJ = game.state.foundations[i].length - 1;
-            for (let j = 0; j < game.state.foundations[i].length; j++) {
-                let card = game.state.foundations[i][j];
+            for (let j = -1; j <= 0; j++) {
+                let card = game.state.foundations[i] + j;
+                if (card % 100 == 99) {
+                    continue
+                }
                 let f = () => {
                     // onclick function for the card
                     let animationFrames = game.select({ location: "foundation", column: i, row: j });
@@ -1166,8 +1171,8 @@ class VisualManager {
     createCard(area: HTMLDivElement, cardObject: Card, cardDisplayStyle: CardDisplayStyle,
         onclick: Function = function () { }, selectionType: SelectionType, selectionLocation: SelectionLocation) { // eslint-disable-line
         // Unpack card information
-        let value = cardObject.value;
-        let suit = cardObject.suit;
+        let value = cardObject % 100;
+        let suit = getSuit(cardObject);
         // Gather template
         let templateArea = document.getElementById('template-area') as HTMLDivElement;
         let cardTemplate = templateArea.getElementsByClassName("playing-card-layout-box")[0] as HTMLDivElement;
@@ -1188,7 +1193,7 @@ class VisualManager {
         }
         // Update the value and the suit
         let valueString: string
-        if (value == 0 && selectionLocation !=="foundation") {
+        if (value == 0 && selectionLocation !== "foundation") {
             valueString = ""
         } else if (value == 1) {
             valueString = "A";
@@ -1396,13 +1401,161 @@ class Solver {
     }
 }
 
-// RUN SOLUTION SEARCH
-// window.onload = () => {
-//     if (VM.displayedGame !== undefined) { // eslint-disable-line
-//         console.log("RUNNING 1st SOLVER")
-//         bruteSolverWrapper(new GameFromGame(VM.displayedGame))
-//     }
-// }
+interface CardUnpakerData {
+    column: number //Columns 0-7 are the standard columns, columns 8-11 freeCells
+    row: number //Where the card is in the row needs to go
+    topmostColumnBlocker: Card | undefined //Card that is closest to the top of this column 
+    countColumnBlocker: number //Number of higher cards in the suit blocking this card
+    // that is of the same suit and higher than this card | undefined if not blocked by own column
+    cardBlocked: Card | undefined //If this card is blocking (e.g.) higher than a hard of the same suit higher in the column
+}
+
+class Unpacker {
+    columns: Array<Array<Card>> //Columns 0-7 are the standard columns, columns 8-11 freeCells
+    cardLookup: Record<Card, CardUnpakerData> //Shows the location in the columns and cards that may be tied
+    nextFoundationCards: Array<Card> //Next card that needs to be put into each foundation slot
+    blockedCards: Set<Card> //List of cards that are blocked by others in thier suit, can't allow duplicates
+
+    constructor(columns: Array<Array<Card>>, cardLookup: Record<Card, CardUnpakerData>,
+        nextFoundationCards: Array<Card>, blockedCards: Set<Card>) {
+        this.columns = columns
+        this.cardLookup = cardLookup
+        this.nextFoundationCards = nextFoundationCards
+        this.blockedCards = blockedCards
+    }
+    countOpenCells() {
+        //Calculate the number of open columns and open freeCells avalaible
+        return this.columns.reduce((accu, column) => accu + (column.length === 0 ? 1 : 0), 0)
+    }
+
+    copy() {
+        //Return a deep copy of the current Unpacker
+        return new UnpackerFromUnpacker(this)
+    }
+
+    step() {
+        //Iterativly call this function to take the best step each time
+        //Set the best possible number of moves to account for covered columns
+        let bestPossible = [...this.blockedCards].reduce((accu, card) => accu + this.cardLookup[card].countColumnBlocker, 0)
+        console.log("bestPossible", bestPossible)
+        //Iterate through the next card for each foundation and find it's depth
+        // If one of the foundations is part of the blockedCards, do that immediatly (if there is space)
+        let stepsToUncoverNextFoundationCard = [99, 99, 99, 99]
+        for (let i = 0; i < this.nextFoundationCards.length; i++) {
+            //Check if higher in a column that another foundation card, if yes, skip this card
+            let cardi = this.nextFoundationCards[i]
+            let lookupi = this.cardLookup[cardi]
+            let skipi = false
+            for (let j = i + 1; j < this.nextFoundationCards.length; j++) {
+                let lookupj = this.cardLookup[this.nextFoundationCards[j]]
+                if (lookupi.column === lookupj.column && lookupi.row < lookupj.row) {
+                    skipi = true
+                    break
+                }
+            }
+            if (skipi) {
+                continue
+            }
+            //Fill with the number of free cells that will need to be filled by the move if passed
+            stepsToUncoverNextFoundationCard[i] = this.columns[lookupi.column].length - lookupi.row - 1
+        }
+        console.log("steps", stepsToUncoverNextFoundationCard)
+        //
+    }
+}
+
+
+class UnpackerFromState extends Unpacker {
+
+    constructor(state: GameState) {
+        //Solver the looks only at unpacking piles
+        // Applies heuristics to find a best possible unpacking strategy given the state
+        // 1) Create a lookup network
+        // 2) Calculate "self stacks" -- where higher numbers in a suit cover lover numbers
+        // 3) Calculate the "optimum" path
+        // 4) Find least unpacks for each suit (ignoring suits that have a child unpack first)
+        // If we ever find a solution that matches the optimum we can stop
+        // If we ever exceed the number of open cells, we can stop
+        //
+        //Setup the objects
+        super(
+            state.columns.map(column => column.slice(1)), //Columns from the state
+            {}, // cardLookup
+            [], //nextFoundationCards
+            new Set() //blockedCards
+        )
+        //Finish filling out the columns
+        this.columns.push(...state.freeCells.map(card => card === 0 ? [] : [card]))
+        for (let i = 0; i < 10; i++) {
+            this.columns.push([])
+        }
+        //Iterate through columns
+        for (let i = 0; i < this.columns.length; i++) {
+            let lowestPerSuit: Array<Card> = [0, 0, 0, 0] //Array of 4 cards, spade...
+            for (let j = 0; j < this.columns[i].length; j++) {
+                let card = this.columns[i][j]
+                let currentSuitLowestCard = lowestPerSuit[getSuit(card) - 1]
+                //Check if any blocking is happening
+                if (currentSuitLowestCard === 0 || currentSuitLowestCard > card) {
+                    // Card is the new lowest of the suit in the category
+                    lowestPerSuit[getSuit(card) - 1] = card
+                    this.cardLookup[card] = {
+                        column: i,
+                        row: j,
+                        topmostColumnBlocker: undefined,
+                        countColumnBlocker: 0,
+                        cardBlocked: undefined
+                    }
+                } else if (currentSuitLowestCard < card) {
+                    // This card is blocking the previous lowest
+                    this.cardLookup[card] = {
+                        column: i,
+                        row: j,
+                        topmostColumnBlocker: undefined,
+                        countColumnBlocker: 0,
+                        cardBlocked: currentSuitLowestCard
+                    }
+                    // The lowerCard is being blocked, it's lookup needs to be updated & added to the blocked cards list (if not already there)
+                    this.cardLookup[currentSuitLowestCard].topmostColumnBlocker = card
+                    this.cardLookup[currentSuitLowestCard].countColumnBlocker++
+                    this.blockedCards.add(currentSuitLowestCard)
+                } else {
+                    throw Error("Not expecting to find a card that is neither higher nor lower")
+                }
+            }
+        }
+        //Iterate through freeCells
+        for (let i = 0; i < state.freeCells.length; i++) {
+            let card = state.freeCells[i]
+            this.cardLookup[card] = {
+                column: i + state.columns.length,
+                row: 0,
+                topmostColumnBlocker: undefined,
+                countColumnBlocker: 0,
+                cardBlocked: undefined
+            }
+        }
+        //Iterate through the foundations to set the next foundation card
+        for (let foundationCard of state.foundations) {
+            this.nextFoundationCards.push(foundationCard + 1)
+        }
+
+    }
+
+
+}
+
+class UnpackerFromUnpacker extends Unpacker {
+    constructor(unpacker: Unpacker) {
+        super(
+            unpacker.columns.map(column => [...column]), //columns
+            JSON.parse(JSON.stringify(unpacker.cardLookup)), //cardLookup
+            [...unpacker.nextFoundationCards], //nextFoundationCards
+            new Set(unpacker.blockedCards) //blockedCards
+        )
+    }
+}
+
 
 let metaStackMover = new StackMover()
 let VM = new VisualManager(document.getElementById('main') as HTMLDivElement);
