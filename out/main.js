@@ -793,8 +793,10 @@ class VisualManager {
                 return;
             }
             let unpacker = new UnpackerFromState(this.displayedGame.state);
-            console.log(unpacker);
-            unpacker.step();
+            let winningUnpacker = [];
+            unpacker.step(winningUnpacker, {});
+            console.log("Unpacker Iterations Run:", unpackerIterationsRun);
+            console.log("Winning unpacker", winningUnpacker);
         };
     }
     newRandomGame() {
@@ -1231,12 +1233,14 @@ class Solver {
         }
     }
 }
+let unpackerIterationsRun = 0;
 class Unpacker {
-    constructor(columns, cardLookup, nextFoundationCards, blockedCards) {
+    constructor(columns, cardLookup, nextFoundationCards, blockedCards, nonFoundationSteps) {
         this.columns = columns;
         this.cardLookup = cardLookup;
         this.nextFoundationCards = nextFoundationCards;
         this.blockedCards = blockedCards;
+        this.nonFoundationSteps = nonFoundationSteps;
     }
     countOpenCells() {
         //Calculate the number of open columns and open freeCells avalaible
@@ -1246,21 +1250,45 @@ class Unpacker {
         //Return a deep copy of the current Unpacker
         return new UnpackerFromUnpacker(this);
     }
-    step() {
+    stringify() {
+        //Stringify self 
+        return this.columns.map(column => column.toString()).sort().toString();
+    }
+    step(winningUnpacker, lookup) {
         //Iterativly call this function to take the best step each time
-        //Set the best possible number of moves to account for covered columns
+        //Inputs:
+        // winningUnpacker - Array of 0 or 1 item that indicates if unpacker is used or not
+        // lookup - takes a string of an unpacker to see if this arrangement has been seen before
+        //Return:
+        // steps to get to the winning state -- in a format yet to be determined
+        //Calculate the fewest possible remaining moves based on coverage properties of the unpacker
         let bestPossible = [...this.blockedCards].reduce((accu, card) => accu + this.cardLookup[card].countColumnBlocker, 0);
-        console.log("bestPossible", bestPossible);
+        console.log(" -".repeat(this.nonFoundationSteps), "best additional", bestPossible, this);
+        if (winningUnpacker.length !== 0 && this.nonFoundationSteps + bestPossible >= winningUnpacker[0].nonFoundationSteps) {
+            //Cannot do better than the solution already found, skip
+            return;
+        }
+        //Record how many times this has been run
+        unpackerIterationsRun += 1;
+        let openCells = this.countOpenCells();
         //Iterate through the next card for each foundation and find it's depth
-        // If one of the foundations is part of the blockedCards, do that immediatly (if there is space)
         let stepsToUncoverNextFoundationCard = [99, 99, 99, 99];
         for (let i = 0; i < this.nextFoundationCards.length; i++) {
-            //Check if higher in a column that another foundation card, if yes, skip this card
             let cardi = this.nextFoundationCards[i];
+            //Check if column is complete, if yes skip
+            if (cardi % 100 > 13) {
+                continue;
+            }
+            //Check if higher in a column than another foundation card, if yes, skip this card
             let lookupi = this.cardLookup[cardi];
             let skipi = false;
             for (let j = i + 1; j < this.nextFoundationCards.length; j++) {
-                let lookupj = this.cardLookup[this.nextFoundationCards[j]];
+                let nextFoundationCardj = this.nextFoundationCards[j];
+                if (nextFoundationCardj % 100 > 13) {
+                    //Foundation already complete for this suit, skip
+                    continue;
+                }
+                let lookupj = this.cardLookup[nextFoundationCardj];
                 if (lookupi.column === lookupj.column && lookupi.row < lookupj.row) {
                     skipi = true;
                     break;
@@ -1270,10 +1298,127 @@ class Unpacker {
                 continue;
             }
             //Fill with the number of free cells that will need to be filled by the move if passed
-            stepsToUncoverNextFoundationCard[i] = this.columns[lookupi.column].length - lookupi.row - 1;
+            let countCardsToMove = this.columns[lookupi.column].length - lookupi.row - 1;
+            if (countCardsToMove > openCells) {
+                //There are ont enough open cells to move that many cards
+                stepsToUncoverNextFoundationCard[i] = 99;
+            }
+            else {
+                stepsToUncoverNextFoundationCard[i] = countCardsToMove;
+            }
         }
         console.log("steps", stepsToUncoverNextFoundationCard);
-        //
+        let sortedSteps = stepsToUncoverNextFoundationCard.map((v, i) => [v, i]).sort((a, b) => a[0] - b[0]);
+        for (let [countCardsToUncover, i] of sortedSteps) {
+            if (countCardsToUncover >= 99) {
+                //Stop checking when reaching un-useable numbers
+                break;
+            }
+            //Create a copy
+            let childUnpacker = this.copy();
+            //Uncover cards
+            let nextFoundationCard = childUnpacker.nextFoundationCards[i];
+            let nextFoundationCardData = childUnpacker.cardLookup[nextFoundationCard];
+            let cardsToMove = childUnpacker.columns[nextFoundationCardData.column].slice(nextFoundationCardData.row + 1);
+            childUnpacker.moveCards(cardsToMove);
+            //Perform any required foundation moves
+            let winningFlag = childUnpacker.foundationMove(); //TODO, this should not need to be called again
+            if (winningFlag) {
+                //Test if better than previous winning solutions
+                if (winningUnpacker.length === 0 || childUnpacker.nonFoundationSteps < winningUnpacker[0].nonFoundationSteps) {
+                    console.log("BEST YET", childUnpacker);
+                    winningUnpacker[0] = childUnpacker;
+                }
+            }
+            else {
+                // Test if this unpacker has been found before
+                let childString = childUnpacker.stringify();
+                if (!(childString in lookup) || childUnpacker.nonFoundationSteps < lookup[childString]) {
+                    //Update the lookup
+                    lookup[childString] = childUnpacker.nonFoundationSteps;
+                    // Run the next iteration
+                    childUnpacker.step(winningUnpacker, lookup);
+                }
+            }
+        }
+    }
+    moveCards(cards) {
+        //Move the specificed cards in order to open spots
+        // Probable error if there are not enough open spots
+        let columnIndex = 0;
+        for (let card of cards) {
+            //Cards should never be moved to foundation while uncovering, because that would be caught earlier
+            //Need to move the card to an openCell
+            //Find and empty column
+            while (this.columns[columnIndex].length > 0) {
+                columnIndex++;
+                if (columnIndex >= this.columns.length) {
+                    throw Error("Expecting to have a place to move cards to.");
+                }
+            }
+            //Actually move the card
+            this.nonFoundationSteps += 1;
+            this.columns[this.cardLookup[card].column].pop();
+            this.columns[columnIndex].push(card);
+            let cardData = this.cardLookup[card];
+            cardData.column = columnIndex;
+            cardData.row = 0;
+            //If was blocking a card, need remove the block
+            if (cardData.cardBlocked !== undefined) {
+                let blockedCardData = this.cardLookup[cardData.cardBlocked];
+                blockedCardData.countColumnBlocker -= 1;
+                //Remove from set of blocked cards if all the blocking cards have been removed
+                if (blockedCardData.countColumnBlocker <= 0) {
+                    this.blockedCards.delete(cardData.cardBlocked);
+                }
+                //Actually remove the reference to the blocked card
+                cardData.cardBlocked = undefined;
+            }
+        }
+    }
+    foundationMove() {
+        //Move any avaliable cards to the foundations
+        //Returns true if the game is in a winning state after the foundation moves, otherwise false
+        let testingSuit = 0;
+        let testUnitlSuit = 0;
+        while (true) {
+            //Try to move a card from the foundation
+            let card = this.nextFoundationCards[testingSuit];
+            //Test if winning on this suit & skip
+            if (card % 100 > 13) {
+                //Suit is winning
+                testingSuit = (testingSuit + 1) % 4;
+                if (testingSuit === testUnitlSuit) {
+                    break;
+                }
+                continue;
+            }
+            let cardData = this.cardLookup[card];
+            if (this.columns[cardData.column].length - 1 === cardData.row) {
+                //At the bottom of the column --- put in the foundation
+                this.columns[cardData.column].pop();
+                this.nextFoundationCards[testingSuit] += 1;
+                testUnitlSuit = testingSuit;
+                //Test to ensure that a card moved to a foundation is not blocking anything
+                if (cardData.cardBlocked !== undefined) {
+                    throw Error("Card moved to foundation should never be blocking.");
+                }
+            }
+            else {
+                //Card of this suit cannot be moved
+                testingSuit = (testingSuit + 1) % 4;
+                if (testingSuit === testUnitlSuit) {
+                    break;
+                }
+            }
+        }
+        //Test if winning
+        for (let card of this.nextFoundationCards) {
+            if (card % 100 < 14) {
+                return false;
+            }
+        }
+        return true;
     }
 }
 class UnpackerFromState extends Unpacker {
@@ -1291,11 +1436,13 @@ class UnpackerFromState extends Unpacker {
         super(state.columns.map(column => column.slice(1)), //Columns from the state
         {}, // cardLookup
         [], //nextFoundationCards
-        new Set() //blockedCards
+        new Set(), //blockedCards
+        0 //nonFoundationSteps
         );
         //Finish filling out the columns
         this.columns.push(...state.freeCells.map(card => card === 0 ? [] : [card]));
-        for (let i = 0; i < 10; i++) {
+        //Add a bunch of extra open cells for testing purposes TODO
+        for (let i = 0; i < 20; i++) {
             this.columns.push([]);
         }
         //Iterate through columns
@@ -1311,7 +1458,6 @@ class UnpackerFromState extends Unpacker {
                     this.cardLookup[card] = {
                         column: i,
                         row: j,
-                        topmostColumnBlocker: undefined,
                         countColumnBlocker: 0,
                         cardBlocked: undefined
                     };
@@ -1321,12 +1467,10 @@ class UnpackerFromState extends Unpacker {
                     this.cardLookup[card] = {
                         column: i,
                         row: j,
-                        topmostColumnBlocker: undefined,
                         countColumnBlocker: 0,
                         cardBlocked: currentSuitLowestCard
                     };
                     // The lowerCard is being blocked, it's lookup needs to be updated & added to the blocked cards list (if not already there)
-                    this.cardLookup[currentSuitLowestCard].topmostColumnBlocker = card;
                     this.cardLookup[currentSuitLowestCard].countColumnBlocker++;
                     this.blockedCards.add(currentSuitLowestCard);
                 }
@@ -1341,7 +1485,6 @@ class UnpackerFromState extends Unpacker {
             this.cardLookup[card] = {
                 column: i + state.columns.length,
                 row: 0,
-                topmostColumnBlocker: undefined,
                 countColumnBlocker: 0,
                 cardBlocked: undefined
             };
@@ -1357,8 +1500,8 @@ class UnpackerFromUnpacker extends Unpacker {
         super(unpacker.columns.map(column => [...column]), //columns
         JSON.parse(JSON.stringify(unpacker.cardLookup)), //cardLookup
         [...unpacker.nextFoundationCards], //nextFoundationCards
-        new Set(unpacker.blockedCards) //blockedCards
-        );
+        new Set(unpacker.blockedCards), //blockedCards
+        unpacker.nonFoundationSteps);
     }
 }
 let metaStackMover = new StackMover();
@@ -1435,4 +1578,657 @@ playButton.onclick = () => {
     solver = new Solver(new GameFromGame(VM.displayedGame)); //reset solver
     wrapper();
 };
+let R = {
+    empty: 0,
+    column: 16,
+    freecell: 32,
+    foundation: 48,
+    suitShift: 4,
+    suitMask: 48, //b110000
+    valueMask: 15, //b001111
+    infinity: 10000
+};
+class LightGame {
+    constructor(parents, columns, freecells, steps, countBlockers, countRemainingCards, lookup, winningSteps) {
+        this.parents = parents;
+        this.columns = columns;
+        this.freecells = freecells;
+        this.steps = steps; //Counted when removing from
+        this.countBlockers = countBlockers;
+        this.countRemainingCards = countRemainingCards; //Changed when adding to foundation
+        this.moves = [];
+        this.bestChild = undefined;
+        this.bestSteps = R.infinity;
+        this.lookup = lookup;
+        this.winningSteps = winningSteps;
+    }
+    copy() {
+        return new LightGame([...this.parents], [...this.columns], [...this.freecells], this.steps, this.countBlockers, this.countRemainingCards, this.lookup, this.winningSteps);
+    }
+    isBlocker(card) {
+        let parent = this.parents[card];
+        //Iterate up the line of parents to see if there are any blocking cards
+        while (parent & R.valueMask) { //Parent does not have value of 0
+            if ((parent & R.suitMask) === (card & R.suitMask) && parent < card) {
+                return true;
+            }
+            parent = this.parents[parent];
+        }
+        return false;
+    }
+    calcPerfectSteps() {
+        return this.steps + this.countBlockers + this.countRemainingCards;
+    }
+    checkWinning() {
+        if (this.countRemainingCards === 0) {
+            this.bestSteps = this.steps;
+            return true;
+        }
+        return false;
+    }
+    stringify() {
+        return JSON.stringify(this.parents);
+    }
+    print() {
+        //Headers
+        let s = "";
+        s += "Parents: ";
+        for (let i = 0; i < 16; i++) {
+            s += this.printCard(i)[0] + "- ";
+        }
+        s += "\n";
+        //Values by suit
+        for (let suit = 0; suit < 4; suit++) {
+            s += `     -${"sdch"[suit]}: `;
+            for (let i = 0; i < 16; i++) {
+                s += this.printCard(this.parents[suit * 16 + i]) + " ";
+            }
+            s += "\n";
+        }
+        //Other Info
+        s += "Columns Free: " + this.columns.map(card => this.printCard(card)).join(", ") + "\n";
+        s += "Freecells   : " + this.freecells.map(card => this.printCard(card)).join(", ") + "\n";
+        //Create readable foundations
+        let foundationStrings = [];
+        for (let suit = 0; suit < 4; suit++) {
+            let card = (suit << R.suitShift) + 1;
+            while (this.parents[card] === R.foundation) {
+                card += 1;
+            }
+            foundationStrings.push(this.printCard(card - 1, true));
+        }
+        s += "Foundations : " + foundationStrings.join(", ") + '\n';
+        //Create readable columns
+        try {
+            let classicColumns = [];
+            for (let card of this.columns) {
+                let A = [];
+                while (card !== R.column) {
+                    A.push(this.printCard(card));
+                    card = this.parents[card];
+                }
+                classicColumns.push(A.join(","));
+            }
+            s += `Columns (${this.columns.length}) : ` + classicColumns.join(" | ") + "\n";
+        }
+        catch {
+            s += "Columns: ERROR \n";
+        }
+        //Statistics like info
+        s += `Steps: ${this.steps}, Blockers: ${this.countBlockers}, Remaining: ${this.countRemainingCards}, Perfect: ${this.calcPerfectSteps()}`;
+        return s;
+    }
+    printCard(card, allowZero = false) {
+        //Return two character representation of card
+        if (card < 0 || card >= 64) {
+            return ">?";
+        }
+        else if ((card & R.valueMask) === 0) {
+            if (allowZero) {
+                return "0" + "sdch"[card >> R.suitShift];
+            }
+            else {
+                return ["**", "*C", "*E", "*F"][card >> R.suitShift];
+            }
+        }
+        else if ((card & R.valueMask) === 14) {
+            return "<D"; //Foundation done
+        }
+        else if ((card & R.valueMask) > 14) {
+            return "<?";
+        }
+        else {
+            return "?A23456789TJQK"[card & R.valueMask] + "sdch"[card >> R.suitShift];
+        }
+    }
+    isNextToFoundation(card) {
+        return this.parents[card - 1] === R.foundation && this.parents[card] !== R.foundation;
+    }
+    //Implement solving functions
+    step() {
+        //Take a solution step
+        // 1) Order by column fitness, then:
+        //    Perform freecell move
+        //    Perform empty column move ---- breaks "unpack" mode if it makes it past here
+        //    Perform move onto higher column
+        // 2) Iterate through freecells
+        //    Perform move onto higher column
+        //    Perform move onto empty column
+        //Return: number of steps to get to a winning state, return 0 if there is no wining state reached
+        // console.log(this.steps, this)
+        if (this.steps > 200) {
+            throw "Too deep";
+        }
+        //1) Move columns by fitness
+        let columnFitness = this.columns.map(card => this.calcColumnFitness(card));
+        let orderedColumns = this.columns.map((_, i) => i).sort((a, b) => this.columns[b] - this.columns[a]);
+        //Test column moves
+        for (let column of orderedColumns) {
+            let card = this.columns[column];
+            //freecell move
+            if (this.freecells.length < 4) {
+                this.applyMove(card, column, -1); //column > freecell
+            }
+            //empty column move
+            if (this.columns.length < 8) {
+                this.applyMove(card, column, R.infinity); //column > empty column
+            }
+            //move to another column
+            let targetColumn = this.columns.indexOf(card + 1);
+            if (targetColumn !== -1) {
+                this.applyMove(card, column, targetColumn); //column > column
+            }
+        }
+        //2) Test freecell moves
+        for (let i = 0; i < this.freecells.length; i++) {
+            //move onto higher column
+            let card = this.freecells[i];
+            let targetColumn = this.columns.indexOf(card + 1);
+            if (targetColumn !== -1) {
+                this.applyMove(card, -1, targetColumn); //freecell > column
+            }
+            //move onto empty column
+            if (this.columns.length < 8) {
+                this.applyMove(card, -1, R.infinity); //column > empty column
+            }
+        }
+    }
+    applyMove(card, sourceColumn, destinationColumn) {
+        //Inputs:
+        // sourceCard: card to be moved
+        // sourceColumn: 
+        //   (0-7) column to removed the card from
+        //   (-1) remove card from freeCell
+        // desinationColumn:
+        //   (0-7) non-empty column to add the card to
+        //   (R.infinity) add the card to emptyColumn
+        //   (-1) add the card to freecell
+        //   (-2) add the card to foundation
+        //Create a copy of this LightGame, apply the move function
+        // Test if winning >> makes it bestChild: TODO: break out of the higher level testing loop
+        // Test if state has been found before >> if better than before continue, else RETURN
+        //  if state has not been found before >> save into the lookup
+        // Go to next step
+        // Test if a winner has been found at the bottom, if yes, replace best move
+        let nextGame = this.copy();
+        //Remove card, add the card, check the column if appropriate
+        if (sourceColumn === -1) {
+            nextGame.removeFromFreeCell(card);
+        }
+        else {
+            nextGame.removeFromColumn(card, sourceColumn);
+        }
+        //Add card to the proper location, parsed by the destination column
+        if (destinationColumn === -2) {
+            nextGame.addToFoundation(card);
+        }
+        else if (destinationColumn === -1) {
+            nextGame.addToFreeCell(card);
+        }
+        else if (destinationColumn === R.infinity) {
+            nextGame.addToColumnEmpty(card);
+        }
+        else {
+            nextGame.addToColumnCard(card, destinationColumn);
+        }
+        //Check for a column remove if the column is either empty or needs to be moved to the foundation
+        if (sourceColumn >= 0) {
+            nextGame.checkColumn(sourceColumn);
+        }
+        //Check if a card was moved to the foundation, if yes, check the next foundation
+        if (destinationColumn === -2) {
+            nextGame.checkFoundation(card + 1);
+        }
+        //Cleanup the columns, removing empty columns
+        let columnToRemove = nextGame.columns.indexOf(R.column);
+        while (columnToRemove >= 0) {
+            nextGame.columns.splice(columnToRemove, 1);
+            columnToRemove = nextGame.columns.indexOf(R.column);
+        }
+        nextGame.inspectState();
+        //Check if the game is winning after the move
+        if (nextGame.checkWinning()) {
+            //Check if winning
+            console.log("FOUND WINNING", nextGame.bestSteps);
+            this.bestSteps = nextGame.bestSteps;
+            this.bestChild = nextGame;
+            return;
+        }
+        //Check if the game state has been reached before
+        let nextGameString = nextGame.stringify();
+        if (nextGameString in this.lookup) {
+            if (nextGame.steps >= this.lookup[nextGameString]) {
+                return;
+            }
+            this.lookup[nextGameString] = nextGame.steps;
+        }
+        else {
+            this.lookup[nextGameString] = nextGame.steps;
+        }
+        //Operate next step on the nextGame
+        nextGame.step();
+        nextGame.inspectState();
+        //Save as the best child, if it is the best
+        if (nextGame.bestSteps < this.bestSteps) {
+            this.bestSteps = nextGame.bestSteps;
+            this.bestChild = nextGame;
+        }
+    }
+    removeFromColumn(card, column) {
+        this.steps += 1;
+        this.countBlockers -= +this.isBlocker(card);
+        // this.parents[card] = R.empty
+        this.columns[column] = this.parents[card];
+    }
+    removeFromFreeCell(card) {
+        this.steps += 1;
+        // this.parents[card] = R.empty
+        this.freecells.splice(this.freecells.indexOf(card), 1);
+    }
+    addToColumnCard(card, column) {
+        this.moves.push({ card: card, target: "C", targetCard: this.columns[column] });
+        this.parents[card] = this.columns[column];
+        this.columns[column] = card;
+        this.countBlockers += +this.isBlocker(card);
+    }
+    addToColumnEmpty(card) {
+        this.moves.push({ card: card, target: "C", targetCard: 0 });
+        this.parents[card] = R.column;
+        this.columns.push(card);
+    }
+    addToFreeCell(card) {
+        this.moves.push({ card: card, target: "E", targetCard: 0 });
+        this.parents[card] = R.freecell;
+        this.freecells.push(card);
+    }
+    addToFoundation(card) {
+        this.moves.push({ card: card, target: "F", targetCard: 0 });
+        this.parents[card] = R.foundation;
+        this.countRemainingCards -= 1;
+    }
+    checkColumn(column) {
+        //To be called after a remove/add pair that exposes a new card in a column
+        // Check if that new card can be moved to the foundation
+        if (this.columns[column] === R.column) {
+            return;
+        }
+        let nextCard = this.columns[column];
+        if (this.parents[nextCard - 1] === R.foundation) {
+            this.removeFromColumn(nextCard, column);
+            this.addToFoundation(nextCard);
+            this.checkColumn(column);
+            this.checkFoundation(nextCard + 1);
+        }
+    }
+    checkFoundation(card) {
+        //Check if a card should be moved to the foundation, if yes, perform the move to the foundation
+        if (card > 13 || this.parents[card] === R.foundation) {
+            return;
+        }
+        //Check if move from freecell
+        if (this.parents[card] === R.freecell) {
+            this.removeFromFreeCell(card);
+            this.addToFoundation(card);
+            this.checkFoundation(card + 1);
+            return;
+        }
+        //Check if card in a column and can be moved 
+        let sourceColumn = this.columns.indexOf(card);
+        if (sourceColumn >= 0) {
+            this.removeFromColumn(card, sourceColumn);
+            this.addToFoundation(card);
+            this.checkColumn(sourceColumn);
+            this.checkFoundation(card + 1);
+        }
+    }
+    calcColumnFitness(card) {
+        //Function to calculate the fitness of a column for unpacking the column from the most exposed card
+        // Lower number is more fit
+        // 1 point per card that is covering the next card to go to a foundation
+        // 100 points per card that is not covering next card to go to the foundation
+        let fitness = 0;
+        while (card !== undefined && card !== R.column) {
+            if (this.parents[card] === R.foundation) {
+                throw "Unexpected next card";
+            }
+            //Test if the card is the next card to be put into a foundation
+            if (this.isNextToFoundation(card)) {
+                return fitness / 100 | 0;
+            }
+            //Else add to the fitness
+            fitness += 100;
+            card = this.parents[card];
+        }
+        return fitness;
+    }
+    inspectState() {
+        //Throws an Exception if an error is found with the state of the game, to try and find what's going on
+        //Check columns
+        if (this.columns.length > 8) {
+            throw "Too many columns";
+        }
+        for (let column = 0; column < this.columns.length; column++) {
+            let card = this.columns[column];
+            if (this.isNonCard(card)) {
+                throw "Error in columns contents";
+            }
+            while (card !== R.column) {
+                if (this.isNonCard(card)) {
+                    throw "Error in columnn trace";
+                }
+                card = this.parents[card];
+            }
+        }
+        //Check freeCells
+        if (this.freecells.length > 4) {
+            throw "Too many freeCells";
+        }
+        for (let freecell = 0; freecell < this.freecells.length; freecell++) {
+            let card = this.freecells[freecell];
+            if (this.isNonCard(card)) {
+                throw "Non card in freecell";
+            }
+            if (this.parents[card] !== R.freecell) {
+                throw "Freecell parent does not point to freecell";
+            }
+        }
+        //Check across for foundations & value 0 is foundation & value 14/15 is empty
+        for (let suit = 0; suit < 4; suit++) {
+            //value 0 should be foundation
+            if (this.parents[suit << R.suitShift] !== R.foundation) {
+                throw "zero value parent is not foundation";
+            }
+            //if parent is foundation, previous parent should be foundation; check that cards reference valid things
+            let prevousParent = this.parents[suit << R.suitShift];
+            for (let value = 1; value <= 13; value++) {
+                let card = (suit << R.suitShift) + value;
+                if (this.isNonCard(card) && !(card === R.foundation || card === R.freecell || card === R.column)) {
+                    throw "card has unexpected parent";
+                }
+                let parent = this.parents[card];
+                if (parent === R.foundation && prevousParent !== R.foundation) {
+                    throw "card in foundation without parent in foundation";
+                }
+            }
+            //vlaue 14/15 should always be empty
+            for (let value = 14; value < 16; value++) {
+                let card = (suit << R.suitShift) + value;
+                if (this.parents[card] !== R.empty) {
+                    throw "value 14/15 has unexpected parent";
+                }
+            }
+        }
+        //Check blockers
+        let checkBlockers = 0;
+        let checkRemainingCards = 0;
+        for (let suit = 0; suit < 4; suit++) {
+            for (let value = 1; value <= 13; value++) {
+                let card = (suit << R.suitShift) + value;
+                checkBlockers += +this.isBlocker(card);
+                if (this.parents[card] !== R.foundation) {
+                    checkRemainingCards += 1;
+                }
+            }
+        }
+        if (checkBlockers !== this.countBlockers) {
+            throw "incorrect countBlockers";
+        }
+        if (checkRemainingCards !== this.countRemainingCards) {
+            throw "incorrect countRemainingCards";
+        }
+    }
+    isNonCard(card) {
+        //Test if the card is a card or some other value
+        return ((card < 0) || (card >= 64) || ((card & R.valueMask) < 1) || ((card & R.valueMask) > 13));
+    }
+}
+class LightGameFromGame extends LightGame {
+    constructor(game) {
+        super(Array(64).fill(0), //parents
+        [], //columns
+        [], //freeCells
+        game.state.depth, 0, //countBlockers
+        0, //countRemainingCards
+        {}, //Lookup
+        [R.infinity]);
+        //Iterate through columns
+        for (let column of game.state.columns) {
+            let parent = R.column;
+            for (let unconvertedCard of column.slice(1)) {
+                let card = this.convertCardToLightCard(unconvertedCard);
+                if (card % 100 === 0) {
+                    continue;
+                }
+                this.parents[card] = parent;
+                this.countBlockers += +this.isBlocker(card);
+                this.countRemainingCards += 1;
+                parent = card;
+            }
+            //Append the most revealed card
+            if (parent !== R.column) {
+                this.columns.push(parent);
+            }
+        }
+        //Iterate through freeCells
+        for (let card of game.state.freeCells) {
+            if (card % 100 !== 0) {
+                card = this.convertCardToLightCard(card);
+                this.parents[card] = R.freecell;
+                this.countRemainingCards += 1;
+                this.freecells.push(card);
+            }
+        }
+        //Iterate through foundations
+        for (let card of game.state.foundations) {
+            card = this.convertCardToLightCard(card);
+            //Mark all cards that are in the foundation
+            for (let i = card & R.suitMask; i <= card; i++) {
+                this.parents[i] = R.foundation;
+            }
+        }
+    }
+    convertCardToLightCard(card) {
+        return (getSuit(card) - 1) * 16 + (card % 100);
+    }
+}
+class StackMoverLight {
+    constructor() {
+        this.stackMoveLookup = {}; //I think this will cause the lookup to be shared across Classes
+    }
+    stackMove(stackSize, openColumns, openFreecells, addedColumnsAfter, addedFreecellsAfter, destinationType, unpackOnlyFlag) {
+        //Apply the function devised in Sheet5 of Book4
+        //Inputs:
+        // stackSize: numnber of cards that need to be moved; will always interpret lowest card as 0
+        // openColumns - the number of columns that are empty and can be filled with anything
+        // openFreeCells - number of open freecells
+        // addedColumnsAfter -- number of columns that become empty after removing the base card
+        // addedFreecellsAfter -- nummber of freecells that become empty after removing the base card
+        // destination type -- 
+        //  empty: move onto one of the empty openColumns
+        //  card: move onto the higher card that is already in a column
+        //  unpackOnly: do not re-stack after the move, bias towards emptycolumns
+        // unpackOnlyFlag -- if true, will only perform the unpack step & will skip the re-pack step
+        //Return: StackMoveLookupItem
+        //Check if an answer is in the lookup
+        let lookupString = `${stackSize}: C${openColumns} E${openFreecells} +C${addedColumnsAfter} +E${addedFreecellsAfter}, D(${destinationType})`;
+        if (lookupString in this.stackMoveLookup) {
+            return this.stackMoveLookup[lookupString];
+        }
+        console.log(lookupString);
+        //Base rejection cases
+        if (destinationType === "empty" && openColumns === 0) {
+            return false;
+        }
+        else if (destinationType === "freecell" && openFreecells === 0) {
+            return false;
+        }
+        else if (destinationType === "freecell" && unpackOnlyFlag !== true) {
+            throw "If destination is freecell, must be unpackOnly case";
+        }
+        //create a moves object
+        let moves = [];
+        //Check if this is a trivial move, if yes, complete the trivial move
+        if (stackSize <= openColumns + openFreecells + +(destinationType === "card" || destinationType === "freecell")) {
+            let card = 0;
+            let steps = 0;
+            let freecellCount = 0;
+            //Add cards to the freecells first; exclude the final card
+            while (freecellCount < openFreecells && card < (stackSize - 1)) {
+                moves.push([card, "freecell"]);
+                steps++;
+                card++;
+                freecellCount++;
+            }
+            let columnCount = 0;
+            //Add cards to the columns next
+            while (card < (stackSize - 1)) {
+                moves.push([card, "empty"]);
+                steps++;
+                card++;
+                columnCount++;
+            }
+            //Put the highest card in the correct location
+            moves.push([card, destinationType]);
+            steps++;
+            //If not an unpack move, move cards on top of the unpacked card
+            if (!unpackOnlyFlag) {
+                for (let card = stackSize - 2; card >= 0; card--) {
+                    moves.push([card, "card"]);
+                    steps++;
+                }
+            }
+            //Save to the lookup table for future use 
+            let stackMoveLookupItem = {
+                steps: steps,
+                moves: moves
+            };
+            this.stackMoveLookup[lookupString] = stackMoveLookupItem;
+            return stackMoveLookupItem;
+        }
+        //Solution was not the simple solution, need to split into potentially more complicated solutions
+        let minimumSteps = R.infinity;
+        let minimumStackSizeA = R.infinity;
+        let minimumStackAMove;
+        let minimumStackBMove;
+        let minimumStackAToBMove; //Not applicable in unpack mode
+        //Split into an A & B stack: 1) move A, 2) move B, 3) move A onto B
+        for (let stackSizeA = 1; stackSizeA < stackSize - 1; stackSizeA++) {
+            let steps = 0;
+            let stackSizeB = stackSize - stackSizeA;
+            //Move A onto a column
+            let returnStackAMove = this.stackMove(stackSizeA, //stackSize
+            openColumns, //openColumns
+            openFreecells, //openFreecells
+            0, //addedColumnsAfter
+            0, //addedFreecellsAfter
+            "empty", //destinationType
+            false);
+            if (returnStackAMove === false) {
+                continue;
+            }
+            else {
+                steps += returnStackAMove.steps;
+            }
+            //Move or unpack B
+            let returnStackBMove = this.stackMove(stackSizeB, //stackSize
+            openColumns - 1, //openColumns
+            openFreecells, //openFreecells
+            addedColumnsAfter, //addedColumnsAfter
+            addedFreecellsAfter, //addedFreecellsAfter
+            destinationType, //destinationType
+            unpackOnlyFlag);
+            if (returnStackBMove === false) {
+                continue;
+            }
+            else {
+                steps += returnStackBMove.steps;
+            }
+            //Move A onto B or ignore if not repacking
+            let returnStackAToBMove = undefined;
+            if (!unpackOnlyFlag) {
+                //repack
+                returnStackAToBMove = this.stackMove(stackSizeA, //stackSize
+                openColumns - 1 + addedColumnsAfter + (destinationType === "empty" ? -1 : 0), //openColumns
+                openFreecells + addedFreecellsAfter, //openFreecells
+                1, //addedColumnsAfter
+                0, //addedFreecellsAfter
+                "card", //destinationType
+                false);
+                if (returnStackAToBMove === false) {
+                    continue;
+                }
+                else {
+                    steps += returnStackAToBMove.steps;
+                }
+            }
+            //If we made it to here it means we passed all the steps, now we check if this is the best path
+            if (steps < minimumSteps) {
+                minimumSteps = steps;
+                minimumStackSizeA = stackSizeA;
+                minimumStackAMove = returnStackAMove;
+                minimumStackBMove = returnStackBMove;
+                minimumStackAToBMove = returnStackAToBMove;
+            }
+        }
+        //Check if a solution was found
+        if (minimumSteps === R.infinity) {
+            this.stackMoveLookup[lookupString] = false;
+            return false;
+        }
+        //A solution was found, update the moves, B stack numbering needs to be updated
+        if (minimumStackAMove !== undefined) {
+            moves.push(...minimumStackAMove.moves);
+        }
+        if (minimumStackBMove !== undefined) {
+            for (let m of minimumStackBMove.moves) {
+                moves.push([m[0] + minimumStackSizeA, m[1]]);
+            }
+        }
+        if (minimumStackAToBMove !== undefined) {
+            moves.push(...minimumStackAToBMove.moves);
+        }
+        //Save to the lookup and return
+        let stackMoveLookupItem = {
+            steps: minimumSteps,
+            moves: moves
+        };
+        this.stackMoveLookup[lookupString] = stackMoveLookupItem;
+        return stackMoveLookupItem;
+    }
+}
+function light() {
+    if (VM.displayedGame !== undefined) {
+        let q = new LightGameFromGame(VM.displayedGame);
+        console.log(q);
+        console.log(q.print());
+        q.step();
+        return q;
+    }
+    else {
+        console.log("undefined Game");
+        return undefined;
+    }
+}
+// let q = light()
+let w = new StackMoverLight();
 //# sourceMappingURL=main.js.map
