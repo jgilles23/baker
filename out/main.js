@@ -1616,6 +1616,21 @@ class LightGame {
         }
         return false;
     }
+    isStackReturnCard(column) {
+        //Check if the column is a stack e.g. 4,3,2 of the same suit would be a stack
+        //If a stack, return the highest card of the stack (E.g. 4)
+        //If not a stack, return false
+        let card = this.columns[column];
+        let parent = this.parents[card];
+        if (card + 1 !== parent) {
+            return false;
+        }
+        while (card + 1 === parent) {
+            card = parent;
+            parent = this.parents[card];
+        }
+        return parent;
+    }
     calcPerfectSteps() {
         return this.steps + this.countBlockers + this.countRemainingCards;
     }
@@ -1725,18 +1740,27 @@ class LightGame {
         //Test column moves
         for (let column of orderedColumns) {
             let card = this.columns[column];
-            //freecell move
-            if (this.freecells.length < 4) {
-                this.applyMove(card, column, -1); //column > freecell
+            //Check if the card is part of a stack, if yes, only allow stack moves
+            let stackParentCard = this.isStackReturnCard(column);
+            if (stackParentCard === false) {
+                //Not a stack
+                //freecell move
+                if (this.freecells.length < 4) {
+                    this.applyMove(card, column, -1); //column > freecell
+                }
+                //empty column move
+                if (this.columns.length < 8) {
+                    this.applyMove(card, column, R.infinity); //column > empty column
+                }
+                //move to another column
+                let targetColumn = this.columns.indexOf(card + 1);
+                if (targetColumn !== -1) {
+                    this.applyMove(card, column, targetColumn); //column > column
+                }
             }
-            //empty column move
-            if (this.columns.length < 8) {
-                this.applyMove(card, column, R.infinity); //column > empty column
-            }
-            //move to another column
-            let targetColumn = this.columns.indexOf(card + 1);
-            if (targetColumn !== -1) {
-                this.applyMove(card, column, targetColumn); //column > column
+            else {
+                //Is a stack --- only allow full stack moves
+                //TODO: see if a portion of the stack is uncovered when we move cards
             }
         }
         //2) Test freecell moves

@@ -1960,6 +1960,22 @@ class LightGame {
         return false
     }
 
+    isStackReturnCard(column: number): false | number {
+        //Check if the column is a stack e.g. 4,3,2 of the same suit would be a stack
+        //If a stack, return the highest card of the stack (E.g. 4)
+        //If not a stack, return false
+        let card = this.columns[column]
+        let parent = this.parents[card]
+        if (card + 1 !== parent) {
+            return false
+        }
+        while (card + 1 === parent) {
+            card = parent
+            parent = this.parents[card]
+        }
+        return parent
+    }
+
     calcPerfectSteps() {
         return this.steps + this.countBlockers + this.countRemainingCards
     }
@@ -2069,18 +2085,27 @@ class LightGame {
         //Test column moves
         for (let column of orderedColumns) {
             let card = this.columns[column]
-            //freecell move
-            if (this.freecells.length < 4) {
-                this.applyMove(card, column, -1) //column > freecell
-            }
-            //empty column move
-            if (this.columns.length < 8) {
-                this.applyMove(card, column, R.infinity) //column > empty column
-            }
-            //move to another column
-            let targetColumn = this.columns.indexOf(card + 1)
-            if (targetColumn !== -1) {
-                this.applyMove(card, column, targetColumn) //column > column
+            //Check if the card is part of a stack, if yes, only allow stack moves
+            let stackParentCard = this.isStackReturnCard(column)
+            if (stackParentCard === false) {
+                //Not a stack
+                //freecell move
+                if (this.freecells.length < 4) {
+                    this.applyMove(card, column, -1) //column > freecell
+                }
+                //empty column move
+                if (this.columns.length < 8) {
+                    this.applyMove(card, column, R.infinity) //column > empty column
+                }
+                //move to another column
+                let targetColumn = this.columns.indexOf(card + 1)
+                if (targetColumn !== -1) {
+                    this.applyMove(card, column, targetColumn) //column > column
+                }
+            } else {
+                //Is a stack --- only allow full stack moves
+                //TODO: see if a portion of the stack is uncovered when we move cards
+
             }
         }
         //2) Test freecell moves
@@ -2356,14 +2381,6 @@ class LightGame {
     }
 }
 
-type StackMoveMove = [number, "empty" | "freecell" | "card"]
-
-interface StackMoveLookupItem {
-    steps: number, //Set to R.infinity if impossible
-    moves: Array<StackMoveMove> //Card, and where the card is moved to
-    //Read moves from left being the first move to right being the last move
-}
-
 class LightGameFromGame extends LightGame {
     constructor(game: Game) {
         super(
@@ -2418,6 +2435,14 @@ class LightGameFromGame extends LightGame {
     }
 }
 
+type StackMoveMove = [number, "empty" | "freecell" | "card"]
+
+interface StackMoveLookupItem {
+    steps: number, //Set to R.infinity if impossible
+    moves: Array<StackMoveMove> //Card, and where the card is moved to
+    //Read moves from left being the first move to right being the last move
+}
+
 class StackMoverLight {
     stackMoveLookup: Record<string, StackMoveLookupItem | false> = {}  //I think this will cause the lookup to be shared across Classes
     constructor() { }
@@ -2455,7 +2480,7 @@ class StackMoverLight {
         //create a moves object
         let moves: StackMoveMove[] = []
         //Check if this is a trivial move, if yes, complete the trivial move
-        if (stackSize <= openColumns + openFreecells +  + (destinationType === "card" || destinationType === "freecell")) {
+        if (stackSize <= openColumns + openFreecells + + (destinationType === "card" || destinationType === "freecell")) {
             let card = 0
             let steps = 0
             let freecellCount = 0
