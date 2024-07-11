@@ -1914,9 +1914,9 @@ class LightGame {
     countRemainingCards: number
     moves: MoveObject[]
     bestChild: LightGame | undefined
-    bestSteps: number
     lookup: Record<string, number> //Lookup the best steps that have been reached at this game
     winningSteps: number[] //Starts as R.infinity, number of steps to best winning condition found yet
+    stackMover: StackMoverLight = new StackMoverLight() //Stack mover shared by all the LightGames
 
     constructor(parents: number[], columns: number[],
         freecells: number[],
@@ -1930,7 +1930,6 @@ class LightGame {
         this.countRemainingCards = countRemainingCards //Changed when adding to foundation
         this.moves = []
         this.bestChild = undefined
-        this.bestSteps = R.infinity
         this.lookup = lookup
         this.winningSteps = winningSteps
     }
@@ -2102,10 +2101,33 @@ class LightGame {
                 if (targetColumn !== -1) {
                     this.applyMove(card, column, targetColumn) //column > column
                 }
-            } else {
+            } else if ((8 - this.columns.length) + (4 - this.freecells.length) >= 2) {
                 //Is a stack --- only allow full stack moves
-                //TODO: see if a portion of the stack is uncovered when we move cards
+                //Calculate the idea location on which to move the stack
+                let destination: "empty" | "freecell" | "card"
+                if (this.columns.indexOf(stackParentCard + 1) > -1) {
+                    destination = "card"
+                } else if (this.freecells.length < 4) {
+                    destination = "freecell"
+                } else {
+                    destination = "empty"
+                }
+                //Test a few stack scenarios to see if a stack move is even possible
+                let idealStackMoce = this.stackMover.stackMove(
+                    stackParentCard - card + 1, //stackSize
+                    8 - this.columns.length, //openColumn
+                    4 - this.freecells.length, //openFreecell
+                    0, //addedColumnsAfter
+                    0, //addedFreecellsAfter
+                    destination, //destinationType
+                    true, //unpackOnlyFlag
+                )
+                if (idealStackMoce !== false) {
+                    //Since the ideal stack move works, it is worth testing the stack move more throughly
 
+                }
+            } else {
+                //Stack move not possible --- pass
             }
         }
         //2) Test freecell moves
@@ -2165,39 +2187,103 @@ class LightGame {
         if (destinationColumn === -2) {
             nextGame.checkFoundation(card + 1)
         }
+        //perform cleanup actions
+        this.postMoveCleanup(nextGame)
+    }
+
+    applyColumnMove(column: number) {
+        //Perform similar steps to applyMove, but attempt to avoid additional copy steps where not required
+        //Get the stack parent card so that the height of the stack can be calculated
+        let card = this.columns[column]
+        let stackParentCard = + this.isStackReturnCard(column)
+        //Calculate the ideal location on which to move the stack
+        let destination: "empty" | "freecell" | "card"
+        let unpackOnlyFlag: boolean
+        if (this.columns.indexOf(stackParentCard + 1) > -1) {
+            destination = "card"
+            unpackOnlyFlag = false
+        } else if (this.columns.length < 8) {
+            destination = "empty"
+            unpackOnlyFlag = false
+        } else {
+            destination = "freecell"
+            unpackOnlyFlag = true
+        }
+        //First test with a full stackmove
+        let stackMoveLookupItem = this.stackMover.stackMove(
+            stackParentCard - card + 1, //stackSize
+            8 - this.columns.length, //openColumns
+            4 - this.freecells.length, //openFreecell
+            0, //addedColumnsAfter
+            0, //addedFreecellsAfter,
+            destination, //destinationType
+            unpackOnlyFlag, //unpackOnlyFlag
+        )
+        if (stackMoveLookupItem !== false && this.steps + stackMoveLookupItem.steps < this.winningSteps[0]) {
+            //Create a copy
+            let nextGame = this.copy()
+            //Perform the stack move
+            for (let move of stackMoveLookupItem.moves) {
+                let c = move[0] + card //card to move --- needs to be pushed up by the base card value 
+                let d = move[1] //destination of the card to move
+                //Remove the card from the column
+                nextGame.removeFromColumn(c, this.columns.indexOf(c))
+                //Based on the destination, add the card back
+                if (d === "card") {
+                    nextGame.addToColumnCard(c + 1, this.columns.indexOf(c + 1))
+                } else if (d === "empty") {
+                    nextGame.addToColumnEmpty(c)
+                } else { //freecell
+                    nextGame.addToFreeCell(c)
+                }
+            }
+            //Check if cards were freed in the column
+            nextGame.checkColumn(column)
+            //Perform cleanup actions
+            this.postMoveCleanup(nextGame)
+            //Move was successful
+        }
+        //else, move was not successful
+    }
+
+    postMoveCleanup(nextGame: LightGame) {
+        //Cleanup columns, checkforwinningstates, check lookup, save to lookup
+        //Performed after either a column move or a general apply move
         //Cleanup the columns, removing empty columns
         let columnToRemove = nextGame.columns.indexOf(R.column)
         while (columnToRemove >= 0) {
             nextGame.columns.splice(columnToRemove, 1)
             columnToRemove = nextGame.columns.indexOf(R.column)
         }
-        nextGame.inspectState()
+        nextGame.inspectState() //TEST --- see if something broke during the move
         //Check if the game is winning after the move
         if (nextGame.checkWinning()) {
             //Check if winning
-            console.log("FOUND WINNING", nextGame.bestSteps)
-            this.bestSteps = nextGame.bestSteps
-            this.bestChild = nextGame
+            console.log("FOUND WINNING", nextGame.steps)
+            if (nextGame.steps < this.winningSteps[0]) {
+                this.winningSteps[0] = nextGame.steps
+            }
+        } else if (nextGame.calcPerfectSteps() >= this.winningSteps[0]) {
+            //Check if the child is too depp to be helpful --- e.g. cannot beat the current winning steps
             return
-        }
-        //Check if the game state has been reached before
-        let nextGameString = nextGame.stringify()
-        if (nextGameString in this.lookup) {
-            if (nextGame.steps >= this.lookup[nextGameString]) {
+        } else {
+            //Check if the game state has been reached before
+            let nextGameString = nextGame.stringify()
+            if (nextGameString in this.lookup && nextGame.steps >= this.lookup[nextGameString]) {
+                //Reached the same state but better before
                 return
             }
             this.lookup[nextGameString] = nextGame.steps
-        } else {
-            this.lookup[nextGameString] = nextGame.steps
+            //Operate next step on the nextGame
+            nextGame.step()
+            nextGame.inspectState() //TEST --- check to make sure we have not screwed too much up
         }
-        //Operate next step on the nextGame
-        nextGame.step()
-        nextGame.inspectState()
         //Save as the best child, if it is the best
         if (nextGame.bestSteps < this.bestSteps) {
             this.bestSteps = nextGame.bestSteps
             this.bestChild = nextGame
         }
+
     }
 
     removeFromColumn(card: number, column: number) {
@@ -2627,3 +2713,207 @@ function light(): LightGame | undefined {
 }
 // let q = light()
 let w = new StackMoverLight()
+
+//Maybe an alternate approach that will take a complete re-write...
+//Back to having columns, freecells, and foundations as separate objects
+//Then have a list of what can be moved to freeCells, what can be moved to emptyCards, and what can be
+//I think it stil likely makse sense to combine freeCell & columns into a single entity
+//With some sort of marker on usage? It would eliminate moves when columns are avaliable
+//But there is some overhead with determining if columns are avaliable
+//And additional overhead to determine when columns are no longer avalaiable
+//Maybe instead we have a list of things that can be moved onto the timeline & thier order?
+//Reset things when moving onto the timeline does not work out
+//Let's build this thoretical data structure
+//What we want is a list 
+
+//TYPE: 
+//(6) bit parent: (2) bit suit & (4) bit value
+//(1) bit 
+
+type CardNumber = number
+
+type TimelineCardState = "timeline" | "foundation" | "covered" | "uncovered"
+
+interface TimelineCard {
+    readonly state: TimelineCardState
+    readonly timelineAvaliable: number
+    readonly lockedFlag: boolean
+    readonly columnParent: CardNumber
+}
+
+class TimelineGame {
+    cards: TimelineCard[] //Length 64
+
+    constructor(cards: TimelineCard[]) {
+        this.cards = cards
+    }
+
+    copy() {
+        return new TimelineGame([...this.cards])
+    }
+
+    copyCardAndReplace(cardNumber: CardNumber): TimelineCard {
+        let card = JSON.parse(JSON.stringify(this.cards[cardNumber]))
+        this.cards[cardNumber] = card
+        return card
+    }
+
+    countState(state: TimelineCardState): number {
+        let count = 0
+        for (let card of this.cards) {
+            count += + (card.state === state)
+        }
+        return count
+    }
+
+    step() {
+        //Make the next avalible move for the current game
+    }
+
+    moveCardToCovered(cardNumber: number) {
+        //Take a card and make it covered so that another card can be put on top
+        let card = this.cards[cardNumber]
+        if (card.state === "timeline") {
+            //Take timeline card and make it the base of a column
+            this.cards[cardNumber] = {
+                state: "covered",
+                timelineAvaliable: 0,
+                lockedFlag: true,
+                columnParent: 0 //base of column
+            }
+        } else if (card.state === "uncovered") {
+            //Take uncovered card and make it covered
+            this.cards[cardNumber] = {
+                state: "covered",
+                timelineAvaliable: 0,
+                lockedFlag: true,
+                columnParent: card.columnParent
+            }
+        } else {
+            throw "Higher does not have expected state."
+        }
+    }
+    moveCoveredToUncovered(cardNumber: number) {
+        //Take a card that was covered and make it uncovered
+        this.cards[cardNumber] = {
+            state: "uncovered",
+            timelineAvaliable: 0,
+            lockedFlag: false,
+            columnParent: this.cards[cardNumber].columnParent
+        }
+        //Unlock the Lower for this card
+        let lowerCard = this.cards[cardNumber - 1]
+        if (lowerCard.lockedFlag === true && (lowerCard.state === "uncovered" || lowerCard.state === "timeline")) {
+            this.cards[cardNumber - 1] = {
+                state: lowerCard.state,
+                timelineAvaliable: lowerCard.timelineAvaliable,
+                lockedFlag: false,
+                columnParent: lowerCard.timelineAvaliable
+            }
+        }
+    }
+
+    moveTimelineToUncovered(cardNumber: CardNumber) {
+        //Take a timeline card and make it uncovered by moving onto Higher card
+        let card = this.cards[cardNumber]
+        let higherNumber = cardNumber + 1
+        //First, make the Higher coverd
+        this.moveCardToCovered(higherNumber)
+        //Then, make the lower card uncovered
+        if (card.lockedFlag) {
+            throw "Card is locked and cannot move"
+        }
+        this.cards[cardNumber] = {
+            state: "uncovered",
+            timelineAvaliable: 0,
+            lockedFlag: true,
+            columnParent: higherNumber
+        }
+    }
+    moveUncoveredToUncovered(cardNumber: CardNumber) {
+        //Take a card that is already the uncovered card of a column & move atop another card
+        let card = this.cards[cardNumber]
+        let higherNumber = cardNumber + 1
+        //First move the higher card
+        this.moveCardToCovered(higherNumber)
+        //Then uncover the parent card
+        let parentNumber = card.columnParent
+        if (parentNumber !== 0) {
+            this.moveCoveredToUncovered(parentNumber)
+        }
+        //Finally make the card uncovered but in its new location
+        this.cards[cardNumber] = {
+            state: "uncovered",
+            timelineAvaliable: 0,
+            lockedFlag: true,
+            columnParent: higherNumber
+        }
+    }
+    moveUncoveredToTimeline(cardNumber: CardNumber) {
+
+    }
+    testMoveToFoundation(cardNumber: CardNumber) {
+
+    }
+
+    applyMoveToThisGame(cardNumber: CardNumber, destination: TimelineCardState) {
+        //Move cards to the destination for THIS game, assumes all game copies have already been made
+        //Create a copy of the card that is being modified & save back to nextGame at the end
+        let card = this.copyCardAndReplace(cardNumber)
+        //Throw error if locked
+        if (card.lockedFlag) {
+            throw "Card is locked or not avaliable."
+        }
+        //First remove the card from it's current location
+        if (card.state === "uncovered") {
+            let parentCard = this.copyCardAndReplace(card.columnParent)
+            parentCard.state = "uncovered"
+            parentCard.lockedFlag = false
+        }
+        //Put the card in the new location
+        if (destination === "timeline") {
+            let timelineNowAvalaible = 12 - this.countState("timeline") - this.countState("uncovered")
+            nextGame.cards[cardNumber] = {
+                state: "timeline",
+                timelineAvaliable: timelineNowAvalaible,
+                lockedFlag: true,
+                columnParent: 0
+            }
+            //Iterate through the timeline & re-set the timelineAvaliable for past cards
+            for (let i = 0; i < nextGame.cards.length; i++) {
+                if (nextGame.cards[i].timelineAvaliable > timelineNowAvalaible) {
+                    let c = nextGame.copyCardAndReplace(i)
+                    c.timelineAvaliable = timelineNowAvalaible
+                }
+            }
+        } else if (destination === "foundation") {
+            nextGame.cards[cardNumber] = {
+                state: "foundation",
+                timelineAvaliable: 0,
+                lockedFlag: true,
+                columnParent: 0
+            }
+        } else if (destination === "covered") {
+            throw "Card cannot be covered on its own"
+        } else if (destination === "uncovered") {
+            nextGame.cards[cardNumber] = {
+                state: "uncovered",
+                timelineAvaliable: 0,
+                lockedFlag: true,
+                columnParent: 0
+            }
+            //Now mark the card that was covered appropriatly as it may be a previous uncovered or a timeline card
+            let parentCard = nextGame.copyCardAndReplace()
+        }
+
+
+    }
+
+    applyFoundationMove(card: CardNumber) {
+        //Move a card to the foundation
+        //Do not need to make a copy of the game first
+    }
+
+
+
+}
